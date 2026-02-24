@@ -1410,10 +1410,16 @@
     // ── CISA KEV ──────────────────────────────────────────
     async function loadKEV() {
       addLog('SYNC', 'Fetching CISA Known Exploited Vulnerabilities catalog...');
-      let success = false;
       try {
-        const url = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
-        const resp = await fetch(url);
+        const kevUrl = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
+        let resp;
+        // Try direct first, fall back to CORS proxy
+        try {
+          resp = await fetch(kevUrl);
+          if (!resp.ok) throw new Error('direct failed');
+        } catch {
+          resp = await fetch(proxyUrl(kevUrl));
+        }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         kevData = data.vulnerabilities || [];
@@ -1423,7 +1429,6 @@
         addLog('KEV', `CISA KEV loaded — ${kevData.length} known exploited CVEs`);
 
         renderKEV();
-        success = true;
         setSourceStatus('kev', true, kevData.length);
       } catch (e) {
         addLog('ALERT', `CISA KEV fetch error: ${e.message} — Using sample data`);
@@ -1547,30 +1552,32 @@
     async function loadPaloAlto() {
       addLog('SYNC', 'Fetching Palo Alto PSIRT advisories...');
       try {
+        // Palo Alto JSON API is CORS-friendly — fetch directly
         const url = 'https://security.paloaltonetworks.com/json';
-        const resp = await fetch(proxyUrl(url));
+        let resp;
+        try { resp = await fetch(url); if (!resp.ok) throw new Error('direct'); }
+        catch { resp = await fetch(proxyUrl(url)); }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
 
-        const advisories = Array.isArray(data) ? data : (data.advisories || data.data || []);
-        const cves = advisories.flatMap(a => {
-          const cveIds = a.CVE_ID || a.cve_id || a.cveId || [];
-          const ids = Array.isArray(cveIds) ? cveIds : [cveIds];
-          return ids.filter(id => id && /^CVE-/i.test(id)).map(id => ({
+        // API returns array of advisories. CVEs have ID starting with 'CVE-'
+        const advisories = Array.isArray(data) ? data : (data.advisories || []);
+        const cves = advisories
+          .filter(a => /^CVE-/i.test(a.ID || ''))
+          .map(a => ({
             _source: 'paloalto',
             cve: {
-              id: id.toUpperCase(),
-              published: a.published || a.date_public || '',
-              descriptions: [{ lang: 'en', value: a.description || a.summary || a.title || 'No description' }],
-              metrics: a.CVSSv3 || a.cvss_score ? {
-                cvssMetricV31: [{ cvssData: { baseScore: parseFloat(a.CVSSv3?.baseScore || a.cvss_score || 0) } }]
+              id: a.ID.toUpperCase(),
+              published: a.date || a.updated || '',
+              descriptions: [{ lang: 'en', value: a.title || (a.problem?.[0]?.value) || 'No description' }],
+              metrics: a.baseScore ? {
+                cvssMetricV31: [{ cvssData: { baseScore: parseFloat(a.baseScore) || 0 } }]
               } : {},
-              configurations: [{
-                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:paloaltonetworks:${(a.product || 'pan-os').toLowerCase().replace(/\s+/g, '_')}:*:*:*` }] }]
-              }]
+              configurations: (a.product || []).map(p => ({
+                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:paloaltonetworks:${p.toLowerCase().replace(/\s+/g, '_')}:*:*:*` }] }]
+              }))
             }
           }));
-        });
 
         setSourceStatus('paloalto', true, cves.length);
         addLog('CVE', `Palo Alto PSIRT loaded — ${cves.length} CVEs`);
@@ -1583,39 +1590,22 @@
 
     // ── Cisco PSIRT ───────────────────────────────────
     async function loadCisco() {
-      addLog('SYNC', 'Fetching Cisco PSIRT advisories...');
+      addLog('SYNC', 'Fetching Cisco PSIRT CVEs via NVD...');
       try {
-        // Cisco public advisory list (CVRF/JSON format via CORS proxy)
-        const url = 'https://sec.cloudapps.cisco.com/security/center/publicationListing.x?product=Cisco&keyword=&cvssCalculator=&criteria=exact&limit=100&release=&format=json';
-        const resp = await fetch(proxyUrl(url));
+        // Cisco PSIRT API requires OAuth — use NVD filtered by Cisco as reliable source
+        const end = new Date().toISOString().split('.')[0] + '.000';
+        const start = new Date(Date.now() - 90 * 86400000).toISOString().split('.')[0] + '.000';
+        const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?cpeName=cpe:2.3:*:cisco:*&pubStartDate=${start}&pubEndDate=${end}&resultsPerPage=50`;
+        const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
-
-        const advisories = data.advisories || data.data || data || [];
-        const cves = advisories.flatMap(a => {
-          const raw = a.cves || a.CVEs || a.cve_id || [];
-          const ids = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',').map(s => s.trim()) : [];
-          return ids.filter(id => id && /^CVE-/i.test(id)).map(id => ({
-            _source: 'cisco',
-            cve: {
-              id: id.toUpperCase(),
-              published: a.firstPublished || a.date || '',
-              descriptions: [{ lang: 'en', value: a.headline || a.summary || a.advisoryTitle || 'No description' }],
-              metrics: a.cvssBaseScore ? {
-                cvssMetricV31: [{ cvssData: { baseScore: parseFloat(a.cvssBaseScore) || 0 } }]
-              } : {},
-              configurations: [{
-                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:cisco:${(a.productNames?.[0] || 'ios').toLowerCase().replace(/\s+/g, '_')}:*:*:*` }] }]
-              }]
-            }
-          }));
-        });
+        const cves = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'cisco' }));
 
         setSourceStatus('cisco', true, cves.length);
-        addLog('CVE', `Cisco PSIRT loaded — ${cves.length} CVEs`);
+        addLog('CVE', `Cisco CVEs loaded — ${cves.length} (via NVD/CPE filter)`);
         mergeExternalCves(cves);
       } catch (e) {
-        addLog('ALERT', `Cisco PSIRT error: ${e.message}`);
+        addLog('ALERT', `Cisco CVE error: ${e.message}`);
         setSourceStatus('cisco', false);
       }
     }
