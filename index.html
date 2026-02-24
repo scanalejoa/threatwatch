@@ -1142,8 +1142,11 @@
       <span class="range-label">SOURCES:</span>
       <div class="source-pill" id="src-nvd"><span class="dot"></span>NVD</div>
       <div class="source-pill" id="src-kev"><span class="dot"></span>CISA KEV</div>
-      <div class="source-pill" id="src-github"><span class="dot"></span>GITHUB ADVISORIES</div>
+      <div class="source-pill" id="src-github"><span class="dot"></span>GITHUB</div>
       <div class="source-pill" id="src-redhat"><span class="dot"></span>RED HAT</div>
+      <div class="source-pill" id="src-paloalto"><span class="dot"></span>PALO ALTO</div>
+      <div class="source-pill" id="src-cisco"><span class="dot"></span>CISCO</div>
+      <div class="source-pill" id="src-fortinet"><span class="dot"></span>FORTINET</div>
     </div>
 
     <!-- Stats Bar -->
@@ -1540,6 +1543,121 @@
       }
     }
 
+    // ── Palo Alto PSIRT ───────────────────────────────
+    async function loadPaloAlto() {
+      addLog('SYNC', 'Fetching Palo Alto PSIRT advisories...');
+      try {
+        const url = 'https://security.paloaltonetworks.com/json';
+        const resp = await fetch(proxyUrl(url));
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        const advisories = Array.isArray(data) ? data : (data.advisories || data.data || []);
+        const cves = advisories.flatMap(a => {
+          const cveIds = a.CVE_ID || a.cve_id || a.cveId || [];
+          const ids = Array.isArray(cveIds) ? cveIds : [cveIds];
+          return ids.filter(id => id && /^CVE-/i.test(id)).map(id => ({
+            _source: 'paloalto',
+            cve: {
+              id: id.toUpperCase(),
+              published: a.published || a.date_public || '',
+              descriptions: [{ lang: 'en', value: a.description || a.summary || a.title || 'No description' }],
+              metrics: a.CVSSv3 || a.cvss_score ? {
+                cvssMetricV31: [{ cvssData: { baseScore: parseFloat(a.CVSSv3?.baseScore || a.cvss_score || 0) } }]
+              } : {},
+              configurations: [{
+                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:paloaltonetworks:${(a.product || 'pan-os').toLowerCase().replace(/\s+/g, '_')}:*:*:*` }] }]
+              }]
+            }
+          }));
+        });
+
+        setSourceStatus('paloalto', true, cves.length);
+        addLog('CVE', `Palo Alto PSIRT loaded — ${cves.length} CVEs`);
+        mergeExternalCves(cves);
+      } catch (e) {
+        addLog('ALERT', `Palo Alto PSIRT error: ${e.message}`);
+        setSourceStatus('paloalto', false);
+      }
+    }
+
+    // ── Cisco PSIRT ───────────────────────────────────
+    async function loadCisco() {
+      addLog('SYNC', 'Fetching Cisco PSIRT advisories...');
+      try {
+        // Cisco public advisory list (CVRF/JSON format via CORS proxy)
+        const url = 'https://sec.cloudapps.cisco.com/security/center/publicationListing.x?product=Cisco&keyword=&cvssCalculator=&criteria=exact&limit=100&release=&format=json';
+        const resp = await fetch(proxyUrl(url));
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        const advisories = data.advisories || data.data || data || [];
+        const cves = advisories.flatMap(a => {
+          const raw = a.cves || a.CVEs || a.cve_id || [];
+          const ids = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',').map(s => s.trim()) : [];
+          return ids.filter(id => id && /^CVE-/i.test(id)).map(id => ({
+            _source: 'cisco',
+            cve: {
+              id: id.toUpperCase(),
+              published: a.firstPublished || a.date || '',
+              descriptions: [{ lang: 'en', value: a.headline || a.summary || a.advisoryTitle || 'No description' }],
+              metrics: a.cvssBaseScore ? {
+                cvssMetricV31: [{ cvssData: { baseScore: parseFloat(a.cvssBaseScore) || 0 } }]
+              } : {},
+              configurations: [{
+                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:cisco:${(a.productNames?.[0] || 'ios').toLowerCase().replace(/\s+/g, '_')}:*:*:*` }] }]
+              }]
+            }
+          }));
+        });
+
+        setSourceStatus('cisco', true, cves.length);
+        addLog('CVE', `Cisco PSIRT loaded — ${cves.length} CVEs`);
+        mergeExternalCves(cves);
+      } catch (e) {
+        addLog('ALERT', `Cisco PSIRT error: ${e.message}`);
+        setSourceStatus('cisco', false);
+      }
+    }
+
+    // ── Fortinet PSIRT ────────────────────────────────
+    async function loadFortinet() {
+      addLog('SYNC', 'Fetching Fortinet PSIRT advisories...');
+      try {
+        const url = 'https://www.fortiguard.com/fv_data/psirt_api/v1/advisories';
+        const resp = await fetch(proxyUrl(url));
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        const advisories = data.advisories || data.data || Object.values(data).find(v => Array.isArray(v)) || [];
+        const cves = advisories.flatMap(a => {
+          const raw = a.cveList || a.cves || a.CVEs || [];
+          const ids = Array.isArray(raw) ? raw : [raw];
+          return ids.filter(id => id && /^CVE-/i.test(String(id))).map(id => ({
+            _source: 'fortinet',
+            cve: {
+              id: String(id).toUpperCase(),
+              published: a.date || a.published || '',
+              descriptions: [{ lang: 'en', value: a.description || a.summary || a.title || 'No description' }],
+              metrics: a.cvssScore ? {
+                cvssMetricV31: [{ cvssData: { baseScore: parseFloat(a.cvssScore) || 0 } }]
+              } : {},
+              configurations: [{
+                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:fortinet:${(a.affectedProductList?.[0] || 'fortios').toLowerCase().replace(/\s+/g, '_')}:*:*:*` }] }]
+              }]
+            }
+          }));
+        });
+
+        setSourceStatus('fortinet', true, cves.length);
+        addLog('CVE', `Fortinet PSIRT loaded — ${cves.length} CVEs`);
+        mergeExternalCves(cves);
+      } catch (e) {
+        addLog('ALERT', `Fortinet PSIRT error: ${e.message}`);
+        setSourceStatus('fortinet', false);
+      }
+    }
+
     // ── Merge external CVEs into allCves ───────────────────
     function mergeExternalCves(incoming) {
       const existing = new Set(allCves.map(v => v.cve.id));
@@ -1927,7 +2045,7 @@
     addLog('SYNC', 'THREATWATCH initialized — loading security feeds...');
 
     // Load data
-    Promise.all([loadNVD(), loadKEV(), loadGitHub(), loadRedHat()]);
+    Promise.all([loadNVD(), loadKEV(), loadGitHub(), loadRedHat(), loadPaloAlto(), loadCisco(), loadFortinet()]);
 
     // Auto-refresh every 5 minutes
     setInterval(() => {
@@ -1936,6 +2054,9 @@
       loadKEV();
       loadGitHub();
       loadRedHat();
+      loadPaloAlto();
+      loadCisco();
+      loadFortinet();
     }, 5 * 60 * 1000);
     // ── Modal ──────────────────────────────────────────────
     function openModal(type) {
