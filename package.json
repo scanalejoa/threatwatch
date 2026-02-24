@@ -1,0 +1,8 @@
+{
+    "name": "threatwatch-security-dashboard",
+    "version": "1.0.0",
+    "description": "THREATWATCH — Global Security Dashboard with live NVD and CISA KEV feeds",
+    "scripts": {
+        "dev": "npx -y serve ."
+    }
+}
