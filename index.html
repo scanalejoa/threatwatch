@@ -1056,6 +1056,48 @@
     .date-go:hover {
       background: rgba(0, 212, 255, 0.25);
     }
+
+    /* Source Status Bar */
+    .source-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+
+    .source-pill {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--muted);
+      transition: all 0.3s;
+    }
+
+    .source-pill.ok {
+      color: var(--accent3);
+      border-color: rgba(57, 255, 20, 0.3);
+      background: rgba(57, 255, 20, 0.06);
+    }
+
+    .source-pill.fail {
+      color: var(--warn);
+      border-color: rgba(255, 170, 0, 0.3);
+      background: rgba(255, 170, 0, 0.06);
+    }
+
+    .source-pill .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
   </style>
 </head>
 
@@ -1070,7 +1112,7 @@
     </div>
     <div class="header-meta">
       <span><span class="status-dot"></span>LIVE FEED</span>
-      <span>SRC: NVD · CISA KEV</span>
+      <span>SRC: NVD · CISA KEV · GITHUB · REDHAT</span>
       <span id="live-time">--:--:--</span>
       <span id="sync-status" style="color: var(--muted)">SYNCING...</span>
     </div>
@@ -1093,6 +1135,15 @@
         <button class="date-go" onclick="loadCustomRange()">LOAD</button>
       </div>
       <span class="range-label" id="range-info" style="margin-left:auto;color:var(--accent)"></span>
+    </div>
+
+    <!-- Source Status -->
+    <div class="source-bar">
+      <span class="range-label">SOURCES:</span>
+      <div class="source-pill" id="src-nvd"><span class="dot"></span>NVD</div>
+      <div class="source-pill" id="src-kev"><span class="dot"></span>CISA KEV</div>
+      <div class="source-pill" id="src-github"><span class="dot"></span>GITHUB ADVISORIES</div>
+      <div class="source-pill" id="src-redhat"><span class="dot"></span>RED HAT</div>
     </div>
 
     <!-- Stats Bar -->
@@ -1330,11 +1381,13 @@
         renderStats();
         renderVendorChart();
         renderDonut();
+        setSourceStatus('nvd', true, allCves.length);
       } catch (e) {
         addLog('ALERT', `NVD API error: ${e.message} — Loading demo data`);
         document.getElementById('sync-status').textContent = 'DEMO MODE';
         document.getElementById('sync-status').style.color = 'var(--warn)';
         document.getElementById('range-info').textContent = 'DEMO MODE';
+        setSourceStatus('nvd', false);
         loadDemoData();
       }
 
@@ -1351,11 +1404,11 @@
       return `${topId} (${top})`;
     }
 
-    // ── CISA KEV ─────────────────────────────────────────
+    // ── CISA KEV ──────────────────────────────────────────
     async function loadKEV() {
       addLog('SYNC', 'Fetching CISA Known Exploited Vulnerabilities catalog...');
+      let success = false;
       try {
-        // Use CORS proxy for CISA KEV
         const url = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -1367,9 +1420,136 @@
         addLog('KEV', `CISA KEV loaded — ${kevData.length} known exploited CVEs`);
 
         renderKEV();
+        success = true;
+        setSourceStatus('kev', true, kevData.length);
       } catch (e) {
         addLog('ALERT', `CISA KEV fetch error: ${e.message} — Using sample data`);
         renderKevDemo();
+        setSourceStatus('kev', false);
+      }
+    }
+
+    // ── Source Status Helper ──────────────────────────────
+    function setSourceStatus(src, ok, count) {
+      const el = document.getElementById(`src-${src}`);
+      if (!el) return;
+      el.classList.remove('ok', 'fail');
+      el.classList.add(ok ? 'ok' : 'fail');
+      if (count !== undefined) {
+        // Update count in pill text (after the dot span)
+        el.childNodes[1].textContent = el.childNodes[1].textContent.split('—')[0].trimEnd() + (ok ? ` — ${count}` : ' — ERR');
+      }
+    }
+
+    // ── CORS Proxy URL ───────────────────────────────
+    // ❗ Update this with YOUR worker URL after deploying cors-proxy/worker.js
+    const CORS_PROXY = 'https://threatwatch-cors-proxy.YOUR-ACCOUNT.workers.dev';
+    function proxyUrl(target) {
+      return `${CORS_PROXY}?url=${encodeURIComponent(target)}`;
+    }
+
+    // ── GitHub Security Advisories ─────────────────────────
+    let githubCves = [];
+    async function loadGitHub() {
+      addLog('SYNC', 'Fetching GitHub Security Advisories...');
+      try {
+        // GitHub public advisories API — no auth needed, CORS-friendly
+        const resp = await fetch('https://api.github.com/advisories?per_page=100&type=reviewed', {
+          headers: { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        // Normalize to NVD-like structure for seamless merging
+        githubCves = data
+          .filter(a => a.cve_id)
+          .map(a => ({
+            _source: 'github',
+            cve: {
+              id: a.cve_id,
+              published: a.published_at,
+              descriptions: [{ lang: 'en', value: a.description || a.summary || 'No description' }],
+              metrics: a.cvss ? {
+                cvssMetricV31: [{ cvssData: { baseScore: a.cvss.score || 0 } }]
+              } : {},
+              configurations: a.vulnerabilities?.map(v => ({
+                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:${v.package?.ecosystem?.toLowerCase() || 'unknown'}:${v.package?.name?.toLowerCase() || 'unknown'}:*:*:*` }] }]
+              })) || []
+            }
+          }));
+
+        addLog('CVE', `GitHub Advisories loaded — ${githubCves.length} CVEs`);
+        setSourceStatus('github', true, githubCves.length);
+
+        // Merge into allCves (avoid duplicates)
+        mergeExternalCves(githubCves);
+      } catch (e) {
+        addLog('ALERT', `GitHub Advisories error: ${e.message}`);
+        setSourceStatus('github', false);
+      }
+    }
+
+    // ── Red Hat Security Data ────────────────────────────
+    let redhatCves = [];
+    async function loadRedHat() {
+      addLog('SYNC', 'Fetching Red Hat Security Data...');
+      try {
+        // Try direct first (may work without proxy), fall back to proxy
+        const directUrl = 'https://access.redhat.com/labs/securitydataapi/cve.json?per_page=100&severity=critical';
+        let resp;
+        try {
+          resp = await fetch(directUrl);
+          if (!resp.ok) throw new Error('Direct blocked');
+        } catch {
+          if (!CORS_PROXY.includes('YOUR-ACCOUNT')) {
+            resp = await fetch(proxyUrl(directUrl));
+          } else {
+            throw new Error('CORS proxy not configured');
+          }
+        }
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        // Normalize to NVD-like structure
+        redhatCves = data
+          .filter(item => item.CVE)
+          .map(item => ({
+            _source: 'redhat',
+            cve: {
+              id: item.CVE,
+              published: item.public_date || '',
+              descriptions: [{ lang: 'en', value: item.bugzilla_description || item.CVE }],
+              metrics: item.cvss3_score ? {
+                cvssMetricV31: [{ cvssData: { baseScore: parseFloat(item.cvss3_score) || 0 } }]
+              } : item.cvss_score ? {
+                cvssMetricV2: [{ cvssData: { baseScore: parseFloat(item.cvss_score) || 0 } }]
+              } : {},
+              configurations: item.affected_packages?.map(p => ({
+                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:redhat:${p.toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
+              })) || []
+            }
+          }));
+
+        addLog('CVE', `Red Hat Security Data loaded — ${redhatCves.length} CVEs`);
+        setSourceStatus('redhat', true, redhatCves.length);
+
+        mergeExternalCves(redhatCves);
+      } catch (e) {
+        addLog('ALERT', `Red Hat Security error: ${e.message}`);
+        setSourceStatus('redhat', false);
+      }
+    }
+
+    // ── Merge external CVEs into allCves ───────────────────
+    function mergeExternalCves(incoming) {
+      const existing = new Set(allCves.map(v => v.cve.id));
+      const newOnes = incoming.filter(v => !existing.has(v.cve.id));
+      if (newOnes.length > 0) {
+        allCves = [...allCves, ...newOnes];
+        renderStats();
+        renderVendorChart();
+        renderDonut();
+        addLog('SYNC', `Merged ${newOnes.length} new CVEs from external source`);
       }
     }
 
@@ -1747,13 +1927,15 @@
     addLog('SYNC', 'THREATWATCH initialized — loading security feeds...');
 
     // Load data
-    Promise.all([loadNVD(), loadKEV()]);
+    Promise.all([loadNVD(), loadKEV(), loadGitHub(), loadRedHat()]);
 
     // Auto-refresh every 5 minutes
     setInterval(() => {
       addLog('SYNC', 'Auto-refresh triggered (5 min interval)');
       loadNVD();
       loadKEV();
+      loadGitHub();
+      loadRedHat();
     }, 5 * 60 * 1000);
     // ── Modal ──────────────────────────────────────────────
     function openModal(type) {
