@@ -1527,9 +1527,16 @@
 
         // API returns array with CVE-* and PAN-SA-* entries.
         // Include both: CVE-* are standard CVEs, PAN-SA-* are Palo Alto security advisories.
+        // Filter to last 3 years to exclude ancient/deferred entries.
         const advisories = Array.isArray(data) ? data : [];
+        const threeYearsAgo = new Date();
+        threeYearsAgo.setFullYear(threeYearsAgo.getFullYear() - 3);
         const cves = advisories
-          .filter(a => /^(CVE-\d|PAN-SA-)/i.test(a.ID || ''))
+          .filter(a => {
+            if (!/^(CVE-\d|PAN-SA-)/i.test(a.ID || '')) return false;
+            const d = new Date(a.date || a.updated || '');
+            return !isNaN(d) && d >= threeYearsAgo;
+          })
           .map(a => ({
             _source: 'paloalto',
             cve: {
