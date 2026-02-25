@@ -1098,6 +1098,338 @@
       border-radius: 50%;
       background: currentColor;
     }
+
+    /* ═══════════════════════════════════════════════════════
+       RESPONSIVE — TABLET (≤768px)
+       ═══════════════════════════════════════════════════════ */
+    @media (max-width: 768px) {
+
+      /* Header: stack vertically */
+      header {
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px;
+        align-items: stretch;
+      }
+
+      .logo {
+        text-align: center;
+        font-size: 20px;
+      }
+
+      .search-wrap {
+        width: 100%;
+      }
+
+      .search-input {
+        flex: 1;
+        width: auto;
+      }
+
+      .header-meta {
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 10px;
+        text-align: center;
+      }
+
+      /* Main content padding */
+      .main {
+        padding: 16px;
+      }
+
+      /* Range bar wrapping */
+      .range-bar {
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .range-tabs {
+        flex-wrap: wrap;
+      }
+
+      .custom-dates {
+        flex-wrap: wrap;
+      }
+
+      #range-info {
+        margin-left: 0 !important;
+        width: 100%;
+      }
+
+      /* Stats: 2 columns */
+      .stats-bar {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+      }
+
+      .stats-bar .stat-card:last-child {
+        grid-column: 1 / -1;
+      }
+
+      /* Dashboard grid: single column */
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .span-2,
+      .span-3 {
+        grid-column: span 1;
+      }
+
+      .panel.full-width {
+        grid-column: 1 / -1;
+      }
+
+      /* CVE items: stacked layout */
+      .cve-item {
+        grid-template-columns: auto 1fr;
+        grid-template-rows: auto auto;
+        gap: 6px 12px;
+      }
+
+      .cve-item .cve-id {
+        grid-row: 1;
+        grid-column: 1;
+      }
+
+      .cve-item .severity-badge {
+        grid-row: 1;
+        grid-column: 2;
+        justify-self: start;
+      }
+
+      .cve-item .cve-desc {
+        grid-row: 2;
+        grid-column: 1 / -1;
+      }
+
+      .cve-item .cvss-score {
+        grid-row: 1;
+        grid-column: 2;
+        justify-self: end;
+      }
+
+      /* Panel header: allow wrapping */
+      .panel-header {
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .panel-header>div {
+        flex-wrap: wrap;
+      }
+
+      /* Filter tabs wrapping */
+      .filter-tabs {
+        flex-wrap: wrap;
+      }
+
+      /* Modal: closer to full screen */
+      .modal {
+        width: 95vw;
+        max-height: 85vh;
+      }
+
+      .modal-item-header {
+        flex-wrap: wrap;
+      }
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       RESPONSIVE — PHONE (≤480px)
+       ═══════════════════════════════════════════════════════ */
+    @media (max-width: 480px) {
+
+      /* Further reduce header */
+      header {
+        padding: 12px;
+      }
+
+      .logo {
+        font-size: 17px;
+        letter-spacing: 3px;
+      }
+
+      /* Hide long source text on small phones */
+      .header-meta span:nth-child(2) {
+        display: none;
+      }
+
+      /* Stats: single column */
+      .stats-bar {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .stats-bar .stat-card:last-child {
+        grid-column: 1;
+      }
+
+      .stat-value {
+        font-size: 22px;
+      }
+
+      .stat-card {
+        padding: 12px 16px;
+      }
+
+      /* Source bar wrapping */
+      .source-bar {
+        gap: 6px;
+      }
+
+      .source-pill {
+        font-size: 9px;
+        padding: 3px 8px;
+      }
+
+      /* CVE items: fully stacked */
+      .cve-item {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 12px 16px;
+      }
+
+      .cve-item .cvss-score {
+        align-self: flex-start;
+        font-size: 14px;
+      }
+
+      .cve-id {
+        font-size: 11px;
+      }
+
+      .cve-desc {
+        font-size: 12px;
+      }
+
+      /* KEV items: stacked */
+      .kev-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+        padding: 10px 16px;
+      }
+
+      .kev-id {
+        width: auto;
+      }
+
+      .kev-date {
+        align-self: flex-end;
+      }
+
+      /* Attack grid: single column */
+      .attack-grid {
+        grid-template-columns: 1fr;
+      }
+
+      /* Donut chart: stack vertically */
+      .donut-wrap {
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .donut-legend {
+        width: 100%;
+      }
+
+      /* Bar chart padding */
+      .bar-chart {
+        padding: 12px;
+      }
+
+      .bar-label {
+        width: 70px;
+        font-size: 11px;
+      }
+
+      .bar-count {
+        font-size: 11px;
+        width: 35px;
+      }
+
+      /* Range bar tighter */
+      .range-bar {
+        gap: 6px;
+      }
+
+      .rtab {
+        padding: 5px 10px;
+        font-size: 10px;
+      }
+
+      /* Filter tabs compact */
+      .ftab {
+        padding: 4px 8px;
+        font-size: 10px;
+      }
+
+      .refresh-btn {
+        padding: 4px 10px;
+        font-size: 10px;
+      }
+
+      /* Panel header */
+      .panel-title {
+        font-size: 10px;
+        letter-spacing: 1px;
+      }
+
+      .panel-badge {
+        font-size: 10px;
+      }
+
+      /* Log feed */
+      .log-feed {
+        height: 150px;
+      }
+
+      .log-line {
+        font-size: 10px;
+        padding: 3px 12px;
+      }
+
+      /* Modal: full screen on phones */
+      .modal {
+        width: 98vw;
+        max-height: 92vh;
+        border-radius: 4px;
+      }
+
+      .modal-header {
+        padding: 12px 16px;
+      }
+
+      .modal-title {
+        font-size: 11px;
+      }
+
+      .modal-item {
+        padding: 10px 16px;
+      }
+
+      .modal-item-desc {
+        font-size: 12px;
+      }
+
+      /* Main padding */
+      .main {
+        padding: 12px;
+      }
+
+      /* Scrollable areas slightly shorter */
+      .cve-scroll {
+        max-height: 400px;
+      }
+
+      .kev-scroll {
+        max-height: 320px;
+      }
+    }
   </style>
 </head>
 
