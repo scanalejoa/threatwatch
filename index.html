@@ -2115,7 +2115,11 @@
         if (isCveId) {
           apiUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${query.toUpperCase()}`;
         } else {
-          apiUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&resultsPerPage=40`;
+          // Limit keyword search to last 3 years for relevant results
+          const searchCutoff = new Date();
+          searchCutoff.setFullYear(searchCutoff.getFullYear() - 3);
+          const cutoffStr = searchCutoff.toISOString().split('.')[0] + '.000';
+          apiUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&pubStartDate=${cutoffStr}&resultsPerPage=40`;
         }
         const resp = await fetch(apiUrl);
         if (resp.ok) {
