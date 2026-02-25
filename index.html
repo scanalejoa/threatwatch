@@ -1933,16 +1933,17 @@
       const m = vuln.cve.metrics;
       if (!m) return 0;
       // Check all metric versions, prefer Primary (NVD) over Secondary (CNA)
-      const pools = [m.cvssMetricV40, m.cvssMetricV31, m.cvssMetricV30, m.cvssMetricV2];
+      const metricKeys = ['cvssMetricV40', 'cvssMetricV31', 'cvssMetricV30', 'cvssMetricV2'];
       let best = 0;
-      for (const pool of pools) {
-        if (!pool) continue;
+      for (const key of metricKeys) {
+        const pool = m[key];
+        if (!pool || !Array.isArray(pool)) continue;
         // Look for Primary (NVD) first
         const primary = pool.find(e => e.type === 'Primary');
-        if (primary) { const s = primary.cvssData?.baseScore || 0; if (s > 0) return s; }
+        if (primary && primary.cvssData && primary.cvssData.baseScore > 0) return primary.cvssData.baseScore;
         // Fall back to any entry with a score (CNA / Secondary)
         for (const entry of pool) {
-          const s = entry.cvssData?.baseScore || 0;
+          const s = (entry.cvssData && entry.cvssData.baseScore) ? entry.cvssData.baseScore : 0;
           if (s > best) best = s;
         }
         if (best > 0) return best;
@@ -2518,6 +2519,20 @@
               const data = await resp.json();
               const apiFetched = data.vulnerabilities || [];
               const localIds = new Set(cveResults.map(v => v.cve.id));
+              // Upgrade local entries that lack CVSS with API metrics
+              apiFetched.forEach(apiV => {
+                if (localIds.has(apiV.cve.id)) {
+                  const local = cveResults.find(v => v.cve.id === apiV.cve.id);
+                  if (local && getCvss(local) === 0 && getCvss(apiV) > 0) {
+                    local.cve.metrics = apiV.cve.metrics;
+                  }
+                }
+                // Also upgrade allCves entries in-place
+                const inAll = allCves.find(v => v.cve.id === apiV.cve.id);
+                if (inAll && getCvss(inAll) === 0 && getCvss(apiV) > 0) {
+                  inAll.cve.metrics = apiV.cve.metrics;
+                }
+              });
               apiResults = apiFetched.filter(v => !localIds.has(v.cve.id));
               addLog('SYNC', `NVD API returned ${apiFetched.length} results (${apiResults.length} new)`);
             }
