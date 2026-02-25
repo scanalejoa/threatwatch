@@ -1931,10 +1931,23 @@
     // ── Helpers ───────────────────────────────────────────
     function getCvss(vuln) {
       const m = vuln.cve.metrics;
-      if (m?.cvssMetricV31?.[0]) return m.cvssMetricV31[0].cvssData.baseScore;
-      if (m?.cvssMetricV30?.[0]) return m.cvssMetricV30[0].cvssData.baseScore;
-      if (m?.cvssMetricV2?.[0]) return m.cvssMetricV2[0].cvssData.baseScore;
-      return 0;
+      if (!m) return 0;
+      // Check all metric versions, prefer Primary (NVD) over Secondary (CNA)
+      const pools = [m.cvssMetricV40, m.cvssMetricV31, m.cvssMetricV30, m.cvssMetricV2];
+      let best = 0;
+      for (const pool of pools) {
+        if (!pool) continue;
+        // Look for Primary (NVD) first
+        const primary = pool.find(e => e.type === 'Primary');
+        if (primary) { const s = primary.cvssData?.baseScore || 0; if (s > 0) return s; }
+        // Fall back to any entry with a score (CNA / Secondary)
+        for (const entry of pool) {
+          const s = entry.cvssData?.baseScore || 0;
+          if (s > best) best = s;
+        }
+        if (best > 0) return best;
+      }
+      return best;
     }
 
     function getCveLink(id) {
