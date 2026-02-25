@@ -1677,19 +1677,22 @@
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
 
-        allCves = data.vulnerabilities || [];
-        const totalResults = data.totalResults || allCves.length;
-        addLog('SYNC', `NVD sync complete — ${allCves.length} of ${totalResults} CVEs loaded (${rangeLabel})`);
+        const nvdResults = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'nvd' }));
+        // Preserve entries from external sources (KEV, GitHub, Palo Alto)
+        const externalCves = allCves.filter(v => v._source && v._source !== 'nvd');
+        allCves = [...nvdResults, ...externalCves];
+        const totalResults = data.totalResults || nvdResults.length;
+        addLog('SYNC', `NVD sync complete — ${nvdResults.length} of ${totalResults} CVEs loaded (${rangeLabel})`);
         addLog('CVE', `Highest CVSS: ${getTopCvss(allCves)}`);
         document.getElementById('sync-status').textContent = '✓ NVD SYNCED';
         document.getElementById('sync-status').style.color = 'var(--accent3)';
-        document.getElementById('range-info').textContent = `${allCves.length} CVEs loaded (${rangeLabel})`;
+        document.getElementById('range-info').textContent = `${nvdResults.length} NVD + ${externalCves.length} external = ${allCves.length} total (${rangeLabel})`;
 
         renderCves();
         renderStats();
         renderVendorChart();
         renderDonut();
-        setSourceStatus('nvd', true, allCves.length);
+        setSourceStatus('nvd', true, nvdResults.length);
       } catch (e) {
         addLog('ALERT', `NVD API error: ${e.message} — Loading demo data`);
         document.getElementById('sync-status').textContent = 'DEMO MODE';
@@ -2314,16 +2317,21 @@
     simulateActivity();
     addLog('SYNC', 'THREATWATCH initialized — loading security feeds...');
 
-    // Load data — 4 unique sources
-    Promise.all([loadNVD(), loadKEV(), loadGitHub(), loadPaloAlto()]);
+    // Load data — NVD first, then external sources merge in
+    loadNVD().then(() => {
+      loadKEV();
+      loadGitHub();
+      loadPaloAlto();
+    });
 
     // Auto-refresh every 5 minutes
     setInterval(() => {
       addLog('SYNC', 'Auto-refresh triggered (5 min interval)');
-      loadNVD();
-      loadKEV();
-      loadGitHub();
-      loadPaloAlto();
+      loadNVD().then(() => {
+        loadKEV();
+        loadGitHub();
+        loadPaloAlto();
+      });
     }, 5 * 60 * 1000);
     // ── Modal ──────────────────────────────────────────────
     function openModal(type) {
