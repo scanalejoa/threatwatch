@@ -1112,7 +1112,7 @@
     </div>
     <div class="header-meta">
       <span><span class="status-dot"></span>LIVE FEED</span>
-      <span>SRC: NVD · CISA KEV · GITHUB · REDHAT</span>
+      <span>SRC: NVD · CISA KEV · GITHUB · PALO ALTO PSIRT</span>
       <span id="live-time">--:--:--</span>
       <span id="sync-status" style="color: var(--muted)">SYNCING...</span>
     </div>
@@ -1143,10 +1143,7 @@
       <div class="source-pill" id="src-nvd"><span class="dot"></span>NVD</div>
       <div class="source-pill" id="src-kev"><span class="dot"></span>CISA KEV</div>
       <div class="source-pill" id="src-github"><span class="dot"></span>GITHUB</div>
-      <div class="source-pill" id="src-redhat"><span class="dot"></span>RED HAT</div>
       <div class="source-pill" id="src-paloalto"><span class="dot"></span>PALO ALTO</div>
-      <div class="source-pill" id="src-cisco"><span class="dot"></span>CISCO</div>
-      <div class="source-pill" id="src-fortinet"><span class="dot"></span>FORTINET</div>
     </div>
 
     <!-- Stats Bar -->
@@ -1412,14 +1409,8 @@
       addLog('SYNC', 'Fetching CISA Known Exploited Vulnerabilities catalog...');
       try {
         const kevUrl = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
-        let resp;
-        // Try direct first, fall back to CORS proxy
-        try {
-          resp = await fetch(kevUrl);
-          if (!resp.ok) throw new Error('direct failed');
-        } catch {
-          resp = await fetch(proxyUrl(kevUrl));
-        }
+        // Always route through the CORS proxy — direct fetch is blocked by browsers
+        const resp = await fetch(proxyUrl(kevUrl));
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         kevData = data.vulnerabilities || [];
@@ -1518,33 +1509,38 @@
       }
     }
 
-    // ── Palo Alto PSIRT ───────────────────────────────
+    // ── Palo Alto PSIRT (direct JSON API) ─────────────────
     async function loadPaloAlto() {
       addLog('SYNC', 'Fetching Palo Alto PSIRT advisories...');
       try {
-        // Palo Alto JSON API is CORS-friendly — fetch directly
+        // security.paloaltonetworks.com/json is CORS-friendly — try direct first
         const url = 'https://security.paloaltonetworks.com/json';
         let resp;
-        try { resp = await fetch(url); if (!resp.ok) throw new Error('direct'); }
-        catch { resp = await fetch(proxyUrl(url)); }
+        try {
+          resp = await fetch(url, { headers: { Accept: 'application/json' } });
+          if (!resp.ok) throw new Error('direct failed');
+        } catch {
+          resp = await fetch(proxyUrl(url));
+        }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
 
-        // API returns array of advisories. CVEs have ID starting with 'CVE-'
-        const advisories = Array.isArray(data) ? data : (data.advisories || []);
+        // API returns array. Entries with ID starting 'CVE-' are actual CVEs.
+        // PAN-SA-* are informational bulletins — skip them.
+        const advisories = Array.isArray(data) ? data : [];
         const cves = advisories
-          .filter(a => /^CVE-/i.test(a.ID || ''))
+          .filter(a => /^CVE-\d/i.test(a.ID || ''))
           .map(a => ({
             _source: 'paloalto',
             cve: {
               id: a.ID.toUpperCase(),
               published: a.date || a.updated || '',
-              descriptions: [{ lang: 'en', value: a.title || (a.problem?.[0]?.value) || 'No description' }],
+              descriptions: [{ lang: 'en', value: a.title || 'No description' }],
               metrics: a.baseScore ? {
                 cvssMetricV31: [{ cvssData: { baseScore: parseFloat(a.baseScore) || 0 } }]
               } : {},
-              configurations: (a.product || []).map(p => ({
-                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:paloaltonetworks:${p.toLowerCase().replace(/\s+/g, '_')}:*:*:*` }] }]
+              configurations: (Array.isArray(a.product) ? a.product : []).map(p => ({
+                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:paloaltonetworks:${p.toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
               }))
             }
           }));
@@ -1558,48 +1554,6 @@
       }
     }
 
-    // ── Cisco CVEs (via NVD CPE filter) ───────────────────
-    async function loadCisco() {
-      addLog('SYNC', 'Fetching Cisco CVEs via NVD...');
-      try {
-        const end = new Date().toISOString().split('.')[0] + '.000';
-        const start = new Date(Date.now() - 90 * 86400000).toISOString().split('.')[0] + '.000';
-        const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=cisco&pubStartDate=${start}&pubEndDate=${end}&resultsPerPage=50`;
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
-        const cves = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'cisco' }));
-
-        setSourceStatus('cisco', true, cves.length);
-        addLog('CVE', `Cisco CVEs loaded — ${cves.length} (via NVD/keyword filter)`);
-        mergeExternalCves(cves);
-      } catch (e) {
-        addLog('ALERT', `Cisco CVE error: ${e.message}`);
-        setSourceStatus('cisco', false);
-      }
-    }
-
-    // ── Fortinet CVEs (via NVD keyword filter) ──────────────
-    async function loadFortinet() {
-      addLog('SYNC', 'Fetching Fortinet CVEs via NVD...');
-      try {
-        // Fortinet has no public advisory JSON API — use NVD keyword filter
-        const end = new Date().toISOString().split('.')[0] + '.000';
-        const start = new Date(Date.now() - 90 * 86400000).toISOString().split('.')[0] + '.000';
-        const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=fortinet&pubStartDate=${start}&pubEndDate=${end}&resultsPerPage=50`;
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
-        const cves = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'fortinet' }));
-
-        setSourceStatus('fortinet', true, cves.length);
-        addLog('CVE', `Fortinet CVEs loaded — ${cves.length} (via NVD/keyword filter)`);
-        mergeExternalCves(cves);
-      } catch (e) {
-        addLog('ALERT', `Fortinet CVE error: ${e.message}`);
-        setSourceStatus('fortinet', false);
-      }
-    }
 
     // ── Merge external CVEs into allCves ───────────────────
     function mergeExternalCves(incoming) {
@@ -1987,8 +1941,8 @@
     simulateActivity();
     addLog('SYNC', 'THREATWATCH initialized — loading security feeds...');
 
-    // Load data
-    Promise.all([loadNVD(), loadKEV(), loadGitHub(), loadRedHat(), loadPaloAlto(), loadCisco(), loadFortinet()]);
+    // Load data — 4 unique sources
+    Promise.all([loadNVD(), loadKEV(), loadGitHub(), loadPaloAlto()]);
 
     // Auto-refresh every 5 minutes
     setInterval(() => {
@@ -1996,10 +1950,7 @@
       loadNVD();
       loadKEV();
       loadGitHub();
-      loadRedHat();
       loadPaloAlto();
-      loadCisco();
-      loadFortinet();
     }, 5 * 60 * 1000);
     // ── Modal ──────────────────────────────────────────────
     function openModal(type) {
