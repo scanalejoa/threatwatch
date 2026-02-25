@@ -1745,10 +1745,21 @@
           }
         }));
 
-        // Cross-reference: mark existing allCves entries as _kevExploited
+        // Cross-reference: mark existing allCves entries as _kevExploited + copy CVSS into KEV entries
         const kevIds = new Set(kevData.map(k => k.cveID));
+        const nvdLookup = {};
         allCves.forEach(v => {
-          if (kevIds.has(v.cve.id)) v._kevExploited = true;
+          if (kevIds.has(v.cve.id)) {
+            v._kevExploited = true;
+            nvdLookup[v.cve.id] = v;
+          }
+        });
+        // Inherit CVSS metrics from NVD for KEV entries that have a match
+        kevCves.forEach(kv => {
+          const nvdMatch = nvdLookup[kv.cve.id];
+          if (nvdMatch && nvdMatch.cve.metrics) {
+            kv.cve.metrics = nvdMatch.cve.metrics;
+          }
         });
 
         mergeExternalCves(kevCves);
@@ -2016,9 +2027,9 @@
         <span class="cve-source src-${src}">${src.toUpperCase()}</span>
       </div>
       <div>
-        <span class="severity-badge sev-${sev}">${sev}</span>
+        <span class="severity-badge sev-${sev}">${score > 0 ? sev : 'N/A'}</span>
       </div>
-      <div class="cvss-score" style="color:${score >= 9 ? 'var(--critical)' : score >= 7 ? 'var(--high)' : score >= 4 ? 'var(--medium)' : 'var(--low)'}">${score.toFixed(1)}</div>
+      <div class="cvss-score" style="color:${score >= 9 ? 'var(--critical)' : score >= 7 ? 'var(--high)' : score >= 4 ? 'var(--medium)' : score > 0 ? 'var(--low)' : 'var(--muted)'}">${score > 0 ? score.toFixed(1) : 'N/A'}</div>
     </div>`;
       }).join('');
 
