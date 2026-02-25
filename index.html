@@ -288,7 +288,7 @@
       padding: 14px 20px;
       border-bottom: 1px solid var(--border);
       display: grid;
-      grid-template-columns: 90px 1fr 70px 60px;
+      grid-template-columns: 110px 1fr 80px 70px 50px;
       gap: 12px;
       align-items: start;
       transition: background 0.2s;
@@ -315,6 +315,54 @@
       font-size: 11px;
       color: var(--muted);
       margin-top: 3px;
+    }
+
+    .cve-source {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 9px;
+      padding: 3px 6px;
+      border-radius: 2px;
+      text-align: center;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+      display: inline-block;
+    }
+
+    .src-nvd {
+      background: rgba(0, 212, 255, 0.12);
+      color: #00d4ff;
+      border: 1px solid rgba(0, 212, 255, 0.25);
+    }
+
+    .src-kev {
+      background: rgba(255, 62, 108, 0.12);
+      color: #ff3e6c;
+      border: 1px solid rgba(255, 62, 108, 0.25);
+    }
+
+    .src-github {
+      background: rgba(180, 79, 255, 0.12);
+      color: #b44fff;
+      border: 1px solid rgba(180, 79, 255, 0.25);
+    }
+
+    .src-paloalto {
+      background: rgba(255, 170, 0, 0.12);
+      color: #ffaa00;
+      border: 1px solid rgba(255, 170, 0, 0.25);
+    }
+
+    .kev-tag {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 8px;
+      padding: 2px 5px;
+      border-radius: 2px;
+      background: rgba(255, 62, 108, 0.18);
+      color: var(--critical);
+      border: 1px solid rgba(255, 62, 108, 0.35);
+      margin-left: 4px;
+      letter-spacing: 0.5px;
+      vertical-align: middle;
     }
 
     .severity-badge {
@@ -473,49 +521,7 @@
       color: var(--low);
     }
 
-    /* CISA KEV panel */
-    .kev-item {
-      padding: 12px 20px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      transition: background 0.2s;
-    }
-
-    .kev-item:hover {
-      background: rgba(255, 62, 108, 0.04);
-    }
-
-    .kev-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      flex-shrink: 0;
-      background: var(--critical);
-      box-shadow: 0 0 6px var(--critical);
-    }
-
-    .kev-id {
-      font-family: 'Share Tech Mono', monospace;
-      font-size: 11px;
-      color: var(--critical);
-      flex-shrink: 0;
-      width: 100px;
-    }
-
-    .kev-name {
-      font-size: 12px;
-      color: var(--text);
-      flex: 1;
-    }
-
-    .kev-date {
-      font-family: 'Share Tech Mono', monospace;
-      font-size: 10px;
-      color: var(--muted);
-      flex-shrink: 0;
-    }
+    /* (KEV panel removed — absorbed into unified vulnerability feed) */
 
     /* Log ticker */
     .log-feed {
@@ -754,10 +760,6 @@
       overflow-y: auto;
     }
 
-    .kev-scroll {
-      max-height: 380px;
-      overflow-y: auto;
-    }
 
     @media (max-width: 1200px) {
       .dashboard-grid {
@@ -1181,31 +1183,35 @@
         grid-column: 1 / -1;
       }
 
-      /* CVE items: stacked layout */
+      /* CVE items: stacked layout for 5-col grid */
       .cve-item {
-        grid-template-columns: auto 1fr;
-        grid-template-rows: auto auto;
-        gap: 6px 12px;
+        grid-template-columns: 1fr auto;
+        grid-template-rows: auto auto auto;
+        gap: 4px 10px;
       }
 
-      .cve-item .cve-id {
+      .cve-item>div:nth-child(1) {
         grid-row: 1;
         grid-column: 1;
       }
 
-      .cve-item .severity-badge {
-        grid-row: 1;
-        grid-column: 2;
-        justify-self: start;
-      }
-
-      .cve-item .cve-desc {
+      .cve-item>div:nth-child(2) {
         grid-row: 2;
         grid-column: 1 / -1;
       }
 
-      .cve-item .cvss-score {
+      .cve-item>div:nth-child(3) {
+        grid-row: 3;
+        grid-column: 1;
+      }
+
+      .cve-item>div:nth-child(4) {
         grid-row: 1;
+        grid-column: 2;
+      }
+
+      .cve-item>div:nth-child(5) {
+        grid-row: 3;
         grid-column: 2;
         justify-self: end;
       }
@@ -1305,21 +1311,6 @@
         font-size: 12px;
       }
 
-      /* KEV items: stacked */
-      .kev-item {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 4px;
-        padding: 10px 16px;
-      }
-
-      .kev-id {
-        width: auto;
-      }
-
-      .kev-date {
-        align-self: flex-end;
-      }
 
       /* Attack grid: single column */
       .attack-grid {
@@ -1425,10 +1416,6 @@
       .cve-scroll {
         max-height: 400px;
       }
-
-      .kev-scroll {
-        max-height: 320px;
-      }
     }
   </style>
 </head>
@@ -1510,16 +1497,23 @@
     <!-- Dashboard Grid -->
     <div class="dashboard-grid">
 
-      <!-- CVE Feed -->
-      <div class="panel">
+      <!-- Unified Vulnerability Feed -->
+      <div class="panel" style="grid-column: 1 / -1">
         <div class="panel-header">
-          <div class="panel-title">⚡ Recent CVEs — NVD Feed</div>
-          <div style="display:flex;gap:8px;align-items:center">
+          <div class="panel-title">⚡ All Vulnerabilities</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <div class="filter-tabs">
               <button class="ftab active" onclick="filterSeverity('ALL', this)">ALL</button>
               <button class="ftab" onclick="filterSeverity('CRITICAL', this)">CRIT</button>
               <button class="ftab" onclick="filterSeverity('HIGH', this)">HIGH</button>
               <button class="ftab" onclick="filterSeverity('MEDIUM', this)">MED</button>
+            </div>
+            <div class="filter-tabs" id="source-tabs">
+              <button class="ftab active" onclick="filterSource('ALL', this)">ALL SOURCES</button>
+              <button class="ftab" onclick="filterSource('nvd', this)">NVD</button>
+              <button class="ftab" onclick="filterSource('kev', this)">KEV</button>
+              <button class="ftab" onclick="filterSource('github', this)">GITHUB</button>
+              <button class="ftab" onclick="filterSource('paloalto', this)">PALOALTO</button>
             </div>
             <button class="refresh-btn" id="refresh-nvd" onclick="loadNVD()">↻ REFRESH</button>
           </div>
@@ -1535,25 +1529,6 @@
           </div>
           <div class="loading-row">
             <div class="skeleton skel-line skel-short"></div>
-            <div class="skeleton skel-line skel-long"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- CISA KEV -->
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">🔴 CISA KEV Catalog</div>
-          <span class="panel-badge" id="kev-badge">LOADING</span>
-        </div>
-        <div class="kev-scroll" id="kev-feed">
-          <div class="loading-row">
-            <div class="skeleton skel-line skel-long"></div>
-          </div>
-          <div class="loading-row">
-            <div class="skeleton skel-line skel-long"></div>
-          </div>
-          <div class="loading-row">
             <div class="skeleton skel-line skel-long"></div>
           </div>
         </div>
@@ -1614,6 +1589,7 @@
     let allCves = [];
     let kevData = [];
     let currentFilter = 'ALL';
+    let currentSourceFilter = 'ALL';
     let logCount = 0;
 
     // ── Live Clock ──────────────────────────────────────
@@ -1736,16 +1712,14 @@
       return `${topId} (${top})`;
     }
 
-    // ── CISA KEV ──────────────────────────────────────────
+    // ── CISA KEV ────────────────────────────────────────────
     async function loadKEV() {
       addLog('SYNC', 'Fetching CISA Known Exploited Vulnerabilities catalog...');
       try {
         const kevUrl = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
-        // Always route through the CORS proxy — direct fetch is blocked by browsers
         const resp = await fetch(proxyUrl(kevUrl));
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
-        // Filter to last 3 years for actionable threat intelligence
         const kevCutoff = new Date();
         kevCutoff.setFullYear(kevCutoff.getFullYear() - 3);
         kevData = (data.vulnerabilities || []).filter(v => {
@@ -1753,15 +1727,34 @@
           return !isNaN(d) && d >= kevCutoff;
         });
 
-        document.getElementById('cnt-kev').textContent = kevData.length;
-        document.getElementById('kev-badge').textContent = `${kevData.length} TOTAL`;
-        addLog('KEV', `CISA KEV loaded — ${kevData.length} known exploited CVEs (last 3 years)`);
+        // Convert KEV entries to NVD-like objects and merge into allCves
+        const kevCves = kevData.map(k => ({
+          _source: 'kev',
+          _kevExploited: true,
+          cve: {
+            id: k.cveID,
+            published: k.dateAdded || '',
+            descriptions: [{ lang: 'en', value: k.vulnerabilityName || k.shortDescription || 'Known exploited vulnerability' }],
+            metrics: {},
+            configurations: k.vendorProject ? [{
+              nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:${k.vendorProject.toLowerCase().replace(/[^a-z0-9]/g, '_')}:${(k.product || '').toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
+            }] : []
+          }
+        }));
 
-        renderKEV();
+        // Cross-reference: mark existing allCves entries as _kevExploited
+        const kevIds = new Set(kevData.map(k => k.cveID));
+        allCves.forEach(v => {
+          if (kevIds.has(v.cve.id)) v._kevExploited = true;
+        });
+
+        mergeExternalCves(kevCves);
+        document.getElementById('cnt-kev').textContent = kevData.length;
+        addLog('KEV', `CISA KEV loaded — ${kevData.length} known exploited CVEs (last 3 years)`);
         setSourceStatus('kev', true, kevData.length);
       } catch (e) {
         addLog('ALERT', `CISA KEV fetch error: ${e.message} — Using sample data`);
-        renderKevDemo();
+        loadKevDemo();
         setSourceStatus('kev', false);
       }
     }
@@ -1913,6 +1906,7 @@
       const newOnes = incoming.filter(v => !existing.has(v.cve.id));
       if (newOnes.length > 0) {
         allCves = [...allCves, ...newOnes];
+        renderCves();
         renderStats();
         renderVendorChart();
         renderDonut();
@@ -1927,6 +1921,11 @@
       if (m?.cvssMetricV30?.[0]) return m.cvssMetricV30[0].cvssData.baseScore;
       if (m?.cvssMetricV2?.[0]) return m.cvssMetricV2[0].cvssData.baseScore;
       return 0;
+    }
+
+    function getCveLink(id) {
+      if (/^PAN-SA-/i.test(id)) return `https://security.paloaltonetworks.com/${encodeURIComponent(id)}`;
+      return `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(id)}`;
     }
 
     function getSeverity(score) {
@@ -1951,45 +1950,67 @@
     // ── Render CVE Feed ───────────────────────────────────
     function filterSeverity(sev, btn) {
       currentFilter = sev;
-      document.querySelectorAll('.ftab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.filter-tabs:first-of-type .ftab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
       renderCves();
+    }
+
+    function filterSource(src, btn) {
+      currentSourceFilter = src;
+      document.querySelectorAll('#source-tabs .ftab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      renderCves();
+    }
+
+    function getSourceLabel(v) {
+      return (v._source || 'nvd').toLowerCase();
     }
 
     function renderCves() {
       const feed = document.getElementById('cve-feed');
       let cvesToShow = allCves;
 
+      // Severity filter
       if (currentFilter !== 'ALL') {
-        cvesToShow = allCves.filter(v => {
+        cvesToShow = cvesToShow.filter(v => {
           const score = getCvss(v);
           return getSeverity(score) === currentFilter;
         });
+      }
+
+      // Source filter
+      if (currentSourceFilter !== 'ALL') {
+        cvesToShow = cvesToShow.filter(v => getSourceLabel(v) === currentSourceFilter);
       }
 
       // Sort by CVSS desc
       cvesToShow.sort((a, b) => getCvss(b) - getCvss(a));
 
       if (cvesToShow.length === 0) {
-        feed.innerHTML = '<div class="error-msg">NO CVEs MATCH FILTER</div>';
+        feed.innerHTML = '<div class="error-msg">NO VULNERABILITIES MATCH FILTERS</div>';
         return;
       }
 
-      feed.innerHTML = cvesToShow.slice(0, 50).map(v => {
+      feed.innerHTML = cvesToShow.slice(0, 60).map(v => {
         const score = getCvss(v);
         const sev = getSeverity(score);
         const desc = v.cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
         const shortDesc = desc.length > 120 ? desc.substring(0, 120) + '...' : desc;
         const published = v.cve.published?.substring(0, 10) || '';
+        const src = getSourceLabel(v);
+        const kevBadge = v._kevExploited ? '<span class="kev-tag">⚡EXPLOITED</span>' : '';
 
         return `
     <div class="cve-item">
       <div>
-        <a class="cve-id" href="https://nvd.nist.gov/vuln/detail/${v.cve.id}" target="_blank" rel="noopener" style="text-decoration:none">${v.cve.id}</a>
+        <a class="cve-id" href="${getCveLink(v.cve.id)}" target="_blank" rel="noopener" style="text-decoration:none">${v.cve.id}</a>${kevBadge}
         <div class="cve-vendor" style="margin-top:4px">${published}</div>
       </div>
       <div>
         <div class="cve-desc">${shortDesc}</div>
+      </div>
+      <div>
+        <span class="cve-source src-${src}">${src.toUpperCase()}</span>
       </div>
       <div>
         <span class="severity-badge sev-${sev}">${sev}</span>
@@ -2040,6 +2061,10 @@
       document.getElementById('cnt-high').textContent = counts.HIGH;
       document.getElementById('cnt-medium').textContent = counts.MEDIUM;
       document.getElementById('cnt-low').textContent = counts.LOW;
+
+      // KEV count from exploited entries
+      const kevCount = allCves.filter(v => v._kevExploited).length;
+      document.getElementById('cnt-kev').textContent = kevCount || kevData.length || '--';
 
       // Update subtitles with top affected vendors
       const sevMap = { CRITICAL: 'sub-critical', HIGH: 'sub-high', MEDIUM: 'sub-medium', LOW: 'sub-low' };
@@ -2110,7 +2135,7 @@
           return `
         <div class="modal-item">
           <div class="modal-item-header">
-            <a href="https://nvd.nist.gov/vuln/detail/${v.cve.id}" target="_blank" rel="noopener">${v.cve.id}</a>
+            <a href="${getCveLink(v.cve.id)}" target="_blank" rel="noopener">${v.cve.id}</a>
             <span class="severity-badge sev-${sev}">${sev}</span>
             <span class="modal-item-score" style="color:${scoreColor}">${score.toFixed(1)}</span>
             <span class="modal-item-date">${published}</span>
@@ -2182,22 +2207,7 @@
   `;
     }
 
-    // ── KEV Feed ──────────────────────────────────────────
-    function renderKEV() {
-      const feed = document.getElementById('kev-feed');
-      const recent = [...kevData].sort((a, b) =>
-        new Date(b.dateAdded) - new Date(a.dateAdded)
-      ).slice(0, 40);
-
-      feed.innerHTML = recent.map(k => `
-    <div class="kev-item">
-      <div class="kev-dot"></div>
-      <a class="kev-id" href="https://nvd.nist.gov/vuln/detail/${k.cveID}" target="_blank" rel="noopener" style="text-decoration:none">${k.cveID}</a>
-      <div class="kev-name">${(k.vulnerabilityName || k.shortDescription || '').substring(0, 60)}</div>
-      <div class="kev-date">${k.dateAdded || ''}</div>
-    </div>
-  `).join('');
-    }
+    // (KEV feed removed — unified into All Vulnerabilities panel)
 
     // ── Attack Categories (static MITRE data) ─────────────
     const attackCategories = [
@@ -2253,7 +2263,7 @@
       });
     }
 
-    function renderKevDemo() {
+    function loadKevDemo() {
       const demoKev = [
         { cveID: 'CVE-2024-3400', vulnerabilityName: 'PAN-OS Command Injection', dateAdded: '2024-04-12' },
         { cveID: 'CVE-2024-21762', vulnerabilityName: 'Fortinet SSL VPN Out-of-Bounds Write', dateAdded: '2024-02-09' },
@@ -2263,8 +2273,19 @@
       ];
       kevData = demoKev;
       document.getElementById('cnt-kev').textContent = '1,100+';
-      document.getElementById('kev-badge').textContent = 'DEMO';
-      renderKEV();
+      // Convert demo KEV to unified format and merge
+      const kevCves = demoKev.map(k => ({
+        _source: 'kev',
+        _kevExploited: true,
+        cve: {
+          id: k.cveID,
+          published: k.dateAdded || '',
+          descriptions: [{ lang: 'en', value: k.vulnerabilityName }],
+          metrics: {},
+          configurations: []
+        }
+      }));
+      mergeExternalCves(kevCves);
     }
 
     // ── Simulate periodic log events ─────────────────────
@@ -2357,7 +2378,7 @@
             return `
               <div class="modal-item">
                 <div class="modal-item-header">
-                  <a href="https://nvd.nist.gov/vuln/detail/${v.cve.id}" target="_blank" rel="noopener">${v.cve.id}</a>
+                  <a href="${getCveLink(v.cve.id)}" target="_blank" rel="noopener">${v.cve.id}</a>
                   <span class="severity-badge sev-${sev}">${sev}</span>
                   <span class="modal-item-score" style="color:${scoreColor}">${score.toFixed(1)}</span>
                   <span class="modal-item-date">${published}</span>
@@ -2395,7 +2416,7 @@
       return `
         <div class="modal-item">
           <div class="modal-item-header">
-            <a href="https://nvd.nist.gov/vuln/detail/${v.cve.id}" target="_blank" rel="noopener">${v.cve.id}</a>
+            <a href="${getCveLink(v.cve.id)}" target="_blank" rel="noopener">${v.cve.id}</a>
             <span class="severity-badge sev-${sev}">${sev}</span>
             <span class="modal-item-score" style="color:${scoreColor}">${score.toFixed(1)}</span>
             <span class="modal-item-date">${published}</span>
@@ -2441,29 +2462,82 @@
       // 3) Live search NVD API
       let apiResults = [];
       try {
-        addLog('SYNC', `Querying NVD API for "${query}"...`);
+        const isPanSA = /^PAN-SA-/i.test(query);
         const isCveId = /^CVE-\d{4}-\d+$/i.test(query);
-        let apiUrl;
-        if (isCveId) {
-          apiUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${query.toUpperCase()}`;
-        } else {
-          // Limit keyword search to last 3 years for relevant results
-          const searchCutoff = new Date();
-          searchCutoff.setFullYear(searchCutoff.getFullYear() - 3);
-          const cutoffStr = searchCutoff.toISOString().split('.')[0] + '.000';
-          apiUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&pubStartDate=${cutoffStr}&resultsPerPage=40`;
+        const isPaloQuery = isPanSA || queryLower.includes('palo alto') || queryLower.includes('paloalto') || queryLower.includes('pan-os');
+
+        // Search NVD API (skip for PAN-SA IDs which NVD doesn't track)
+        if (!isPanSA) {
+          addLog('SYNC', `Querying NVD API for "${query}"...`);
+          try {
+            let apiUrl;
+            if (isCveId) {
+              apiUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${query.toUpperCase()}`;
+            } else {
+              const searchCutoff = new Date();
+              searchCutoff.setFullYear(searchCutoff.getFullYear() - 3);
+              const cutoffStr = searchCutoff.toISOString().split('.')[0] + '.000';
+              apiUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&pubStartDate=${cutoffStr}&resultsPerPage=40`;
+            }
+            const resp = await fetch(apiUrl);
+            if (resp.ok) {
+              const data = await resp.json();
+              const apiFetched = data.vulnerabilities || [];
+              const localIds = new Set(cveResults.map(v => v.cve.id));
+              apiResults = apiFetched.filter(v => !localIds.has(v.cve.id));
+              addLog('SYNC', `NVD API returned ${apiFetched.length} results (${apiResults.length} new)`);
+            }
+          } catch (e) {
+            addLog('ALERT', `Live NVD search failed: ${e.message}`);
+          }
         }
-        const resp = await fetch(apiUrl);
-        if (resp.ok) {
-          const data = await resp.json();
-          const apiFetched = data.vulnerabilities || [];
-          // Deduplicate: exclude IDs already in local results
-          const localIds = new Set(cveResults.map(v => v.cve.id));
-          apiResults = apiFetched.filter(v => !localIds.has(v.cve.id));
-          addLog('SYNC', `NVD API returned ${apiFetched.length} results (${apiResults.length} new)`);
+
+        // Search Palo Alto PSIRT API for PAN-SA or Palo Alto queries
+        if (isPaloQuery) {
+          addLog('SYNC', `Querying Palo Alto PSIRT for "${query}"...`);
+          try {
+            const paUrl = 'https://security.paloaltonetworks.com/json';
+            let paResp;
+            try {
+              paResp = await fetch(paUrl, { headers: { Accept: 'application/json' } });
+              if (!paResp.ok) throw new Error('direct failed');
+            } catch {
+              paResp = await fetch(proxyUrl(paUrl));
+            }
+            if (paResp.ok) {
+              const paData = await paResp.json();
+              const advisories = Array.isArray(paData) ? paData : [];
+              const localIds = new Set([...cveResults.map(v => v.cve.id), ...apiResults.map(v => v.cve.id)]);
+              const paResults = advisories
+                .filter(a => {
+                  const id = (a.ID || '').toUpperCase();
+                  if (localIds.has(id)) return false;
+                  const title = (a.title || '').toLowerCase();
+                  return id.includes(query.toUpperCase()) || title.includes(queryLower);
+                })
+                .map(a => ({
+                  _source: 'paloalto',
+                  cve: {
+                    id: a.ID.toUpperCase(),
+                    published: a.date || a.updated || '',
+                    descriptions: [{ lang: 'en', value: a.title || 'No description' }],
+                    metrics: a.baseScore ? {
+                      cvssMetricV31: [{ cvssData: { baseScore: parseFloat(a.baseScore) || 0 } }]
+                    } : {},
+                    configurations: (Array.isArray(a.product) ? a.product : []).map(p => ({
+                      nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:paloaltonetworks:${p.toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
+                    }))
+                  }
+                }));
+              apiResults = [...apiResults, ...paResults];
+              addLog('SYNC', `Palo Alto PSIRT returned ${paResults.length} matching advisories`);
+            }
+          } catch (e) {
+            addLog('ALERT', `Palo Alto PSIRT search failed: ${e.message}`);
+          }
         }
       } catch (e) {
-        addLog('ALERT', `Live NVD search failed: ${e.message}`);
+        addLog('ALERT', `Live search failed: ${e.message}`);
       }
 
       // 4) Render results
