@@ -2527,7 +2527,6 @@
                     local.cve.metrics = apiV.cve.metrics;
                   }
                 }
-                // Also upgrade allCves entries in-place
                 const inAll = allCves.find(v => v.cve.id === apiV.cve.id);
                 if (inAll && getCvss(inAll) === 0 && getCvss(apiV) > 0) {
                   inAll.cve.metrics = apiV.cve.metrics;
@@ -2539,6 +2538,31 @@
           } catch (e) {
             addLog('ALERT', `Live NVD search failed: ${e.message}`);
           }
+        }
+
+        // 3b) Enrich local results missing CVSS by fetching individual CVE details
+        const needsEnrich = cveResults.filter(v => getCvss(v) === 0 && /^CVE-/i.test(v.cve.id)).slice(0, 10);
+        if (needsEnrich.length > 0) {
+          addLog('SYNC', `Enriching ${needsEnrich.length} CVEs with missing CVSS scores...`);
+          const enrichPromises = needsEnrich.map(v =>
+            fetch(`https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${v.cve.id}`)
+              .then(r => r.ok ? r.json() : null)
+              .then(data => {
+                if (data && data.vulnerabilities && data.vulnerabilities[0]) {
+                  const fresh = data.vulnerabilities[0];
+                  const freshScore = getCvss(fresh);
+                  if (freshScore > 0) {
+                    v.cve.metrics = fresh.cve.metrics;
+                    // Also update in allCves
+                    const inAll = allCves.find(a => a.cve.id === v.cve.id);
+                    if (inAll) inAll.cve.metrics = fresh.cve.metrics;
+                  }
+                }
+              })
+              .catch(() => { })
+          );
+          await Promise.all(enrichPromises);
+          addLog('SYNC', `CVSS enrichment complete`);
         }
 
         // Search Palo Alto PSIRT API for PAN-SA or Palo Alto queries
