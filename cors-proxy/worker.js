@@ -7,6 +7,7 @@
 
 // Allowed origin(s) — update this to your Cloudflare Pages domain
 const ALLOWED_ORIGINS = [
+  'https://threatwatch-7du.pages.dev',
   'https://threatwatch.pages.dev',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
