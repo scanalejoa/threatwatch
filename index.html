@@ -1525,11 +1525,11 @@
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
 
-        // API returns array. Entries with ID starting 'CVE-' are actual CVEs.
-        // PAN-SA-* are informational bulletins — skip them.
+        // API returns array with CVE-* and PAN-SA-* entries.
+        // Include both: CVE-* are standard CVEs, PAN-SA-* are Palo Alto security advisories.
         const advisories = Array.isArray(data) ? data : [];
         const cves = advisories
-          .filter(a => /^CVE-\d/i.test(a.ID || ''))
+          .filter(a => /^(CVE-\d|PAN-SA-)/i.test(a.ID || ''))
           .map(a => ({
             _source: 'paloalto',
             cve: {
@@ -1546,7 +1546,7 @@
           }));
 
         setSourceStatus('paloalto', true, cves.length);
-        addLog('CVE', `Palo Alto PSIRT loaded — ${cves.length} CVEs`);
+        addLog('CVE', `Palo Alto PSIRT loaded — ${cves.length} advisories (CVEs + PAN-SA)`);
         mergeExternalCves(cves);
       } catch (e) {
         addLog('ALERT', `Palo Alto PSIRT error: ${e.message}`);
