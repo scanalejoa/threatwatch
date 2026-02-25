@@ -1413,11 +1413,17 @@
         const resp = await fetch(proxyUrl(kevUrl));
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
-        kevData = data.vulnerabilities || [];
+        // Filter to last 3 years for actionable threat intelligence
+        const kevCutoff = new Date();
+        kevCutoff.setFullYear(kevCutoff.getFullYear() - 3);
+        kevData = (data.vulnerabilities || []).filter(v => {
+          const d = new Date(v.dateAdded || '');
+          return !isNaN(d) && d >= kevCutoff;
+        });
 
         document.getElementById('cnt-kev').textContent = kevData.length;
         document.getElementById('kev-badge').textContent = `${kevData.length} TOTAL`;
-        addLog('KEV', `CISA KEV loaded — ${kevData.length} known exploited CVEs`);
+        addLog('KEV', `CISA KEV loaded — ${kevData.length} known exploited CVEs (last 3 years)`);
 
         renderKEV();
         setSourceStatus('kev', true, kevData.length);
@@ -1460,8 +1466,15 @@
         const data = await resp.json();
 
         // Normalize to NVD-like structure for seamless merging
+        // Filter to last 3 years for actionable threat intelligence
+        const ghCutoff = new Date();
+        ghCutoff.setFullYear(ghCutoff.getFullYear() - 3);
         githubCves = data
-          .filter(a => a.cve_id)
+          .filter(a => {
+            if (!a.cve_id) return false;
+            const d = new Date(a.published_at || '');
+            return !isNaN(d) && d >= ghCutoff;
+          })
           .map(a => ({
             _source: 'github',
             cve: {
