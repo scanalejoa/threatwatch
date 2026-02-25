@@ -1497,53 +1497,23 @@
       }
     }
 
-    // ── Red Hat Security Data ────────────────────────────
-    let redhatCves = [];
+    // ── Red Hat CVEs (via NVD CPE filter) ──────────────────
     async function loadRedHat() {
-      addLog('SYNC', 'Fetching Red Hat Security Data...');
+      addLog('SYNC', 'Fetching Red Hat CVEs via NVD...');
       try {
-        // Try direct first (may work without proxy), fall back to proxy
-        const directUrl = 'https://access.redhat.com/labs/securitydataapi/cve.json?per_page=100&severity=critical';
-        let resp;
-        try {
-          resp = await fetch(directUrl);
-          if (!resp.ok) throw new Error('Direct blocked');
-        } catch {
-          if (!CORS_PROXY.includes('YOUR-ACCOUNT')) {
-            resp = await fetch(proxyUrl(directUrl));
-          } else {
-            throw new Error('CORS proxy not configured');
-          }
-        }
+        const end = new Date().toISOString().split('.')[0] + '.000';
+        const start = new Date(Date.now() - 90 * 86400000).toISOString().split('.')[0] + '.000';
+        const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=redhat&pubStartDate=${start}&pubEndDate=${end}&resultsPerPage=50`;
+        const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
+        const cves = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'redhat' }));
 
-        // Normalize to NVD-like structure
-        redhatCves = data
-          .filter(item => item.CVE)
-          .map(item => ({
-            _source: 'redhat',
-            cve: {
-              id: item.CVE,
-              published: item.public_date || '',
-              descriptions: [{ lang: 'en', value: item.bugzilla_description || item.CVE }],
-              metrics: item.cvss3_score ? {
-                cvssMetricV31: [{ cvssData: { baseScore: parseFloat(item.cvss3_score) || 0 } }]
-              } : item.cvss_score ? {
-                cvssMetricV2: [{ cvssData: { baseScore: parseFloat(item.cvss_score) || 0 } }]
-              } : {},
-              configurations: item.affected_packages?.map(p => ({
-                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:redhat:${p.toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
-              })) || []
-            }
-          }));
-
-        addLog('CVE', `Red Hat Security Data loaded — ${redhatCves.length} CVEs`);
-        setSourceStatus('redhat', true, redhatCves.length);
-
-        mergeExternalCves(redhatCves);
+        setSourceStatus('redhat', true, cves.length);
+        addLog('CVE', `Red Hat CVEs loaded — ${cves.length} (via NVD/keyword filter)`);
+        mergeExternalCves(cves);
       } catch (e) {
-        addLog('ALERT', `Red Hat Security error: ${e.message}`);
+        addLog('ALERT', `Red Hat CVE error: ${e.message}`);
         setSourceStatus('redhat', false);
       }
     }
@@ -1588,21 +1558,20 @@
       }
     }
 
-    // ── Cisco PSIRT ───────────────────────────────────
+    // ── Cisco CVEs (via NVD CPE filter) ───────────────────
     async function loadCisco() {
-      addLog('SYNC', 'Fetching Cisco PSIRT CVEs via NVD...');
+      addLog('SYNC', 'Fetching Cisco CVEs via NVD...');
       try {
-        // Cisco PSIRT API requires OAuth — use NVD filtered by Cisco as reliable source
         const end = new Date().toISOString().split('.')[0] + '.000';
         const start = new Date(Date.now() - 90 * 86400000).toISOString().split('.')[0] + '.000';
-        const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?cpeName=cpe:2.3:*:cisco:*&pubStartDate=${start}&pubEndDate=${end}&resultsPerPage=50`;
+        const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=cisco&pubStartDate=${start}&pubEndDate=${end}&resultsPerPage=50`;
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         const cves = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'cisco' }));
 
         setSourceStatus('cisco', true, cves.length);
-        addLog('CVE', `Cisco CVEs loaded — ${cves.length} (via NVD/CPE filter)`);
+        addLog('CVE', `Cisco CVEs loaded — ${cves.length} (via NVD/keyword filter)`);
         mergeExternalCves(cves);
       } catch (e) {
         addLog('ALERT', `Cisco CVE error: ${e.message}`);
@@ -1610,40 +1579,24 @@
       }
     }
 
-    // ── Fortinet PSIRT ────────────────────────────────
+    // ── Fortinet CVEs (via NVD keyword filter) ──────────────
     async function loadFortinet() {
-      addLog('SYNC', 'Fetching Fortinet PSIRT advisories...');
+      addLog('SYNC', 'Fetching Fortinet CVEs via NVD...');
       try {
-        const url = 'https://www.fortiguard.com/fv_data/psirt_api/v1/advisories';
-        const resp = await fetch(proxyUrl(url));
+        // Fortinet has no public advisory JSON API — use NVD keyword filter
+        const end = new Date().toISOString().split('.')[0] + '.000';
+        const start = new Date(Date.now() - 90 * 86400000).toISOString().split('.')[0] + '.000';
+        const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=fortinet&pubStartDate=${start}&pubEndDate=${end}&resultsPerPage=50`;
+        const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
-
-        const advisories = data.advisories || data.data || Object.values(data).find(v => Array.isArray(v)) || [];
-        const cves = advisories.flatMap(a => {
-          const raw = a.cveList || a.cves || a.CVEs || [];
-          const ids = Array.isArray(raw) ? raw : [raw];
-          return ids.filter(id => id && /^CVE-/i.test(String(id))).map(id => ({
-            _source: 'fortinet',
-            cve: {
-              id: String(id).toUpperCase(),
-              published: a.date || a.published || '',
-              descriptions: [{ lang: 'en', value: a.description || a.summary || a.title || 'No description' }],
-              metrics: a.cvssScore ? {
-                cvssMetricV31: [{ cvssData: { baseScore: parseFloat(a.cvssScore) || 0 } }]
-              } : {},
-              configurations: [{
-                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:fortinet:${(a.affectedProductList?.[0] || 'fortios').toLowerCase().replace(/\s+/g, '_')}:*:*:*` }] }]
-              }]
-            }
-          }));
-        });
+        const cves = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'fortinet' }));
 
         setSourceStatus('fortinet', true, cves.length);
-        addLog('CVE', `Fortinet PSIRT loaded — ${cves.length} CVEs`);
+        addLog('CVE', `Fortinet CVEs loaded — ${cves.length} (via NVD/keyword filter)`);
         mergeExternalCves(cves);
       } catch (e) {
-        addLog('ALERT', `Fortinet PSIRT error: ${e.message}`);
+        addLog('ALERT', `Fortinet CVE error: ${e.message}`);
         setSourceStatus('fortinet', false);
       }
     }
