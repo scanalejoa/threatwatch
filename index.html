@@ -2150,17 +2150,28 @@
 
         if (kevResults.length > 0) {
           html += `<div style="padding:10px 24px 4px;font-family:'Orbitron',monospace;font-size:10px;letter-spacing:2px;color:var(--critical);text-transform:uppercase;border-top:1px solid var(--border)">CISA KEV (${kevResults.length} matches)</div>`;
-          html += kevResults.slice(0, 15).map(k => `
+          html += kevResults.slice(0, 15).map(k => {
+            // Cross-reference with NVD data to get CVSS score
+            const nvdMatch = allCves.find(v => v.cve.id === k.cveID);
+            const score = nvdMatch ? getCvss(nvdMatch) : 0;
+            const sev = score > 0 ? getSeverity(score) : '';
+            const scoreColor = score >= 9 ? 'var(--critical)' : score >= 7 ? 'var(--high)' : score >= 4 ? 'var(--medium)' : 'var(--low)';
+            const scoreHtml = score > 0
+              ? `<span class="severity-badge sev-${sev}">${sev}</span><span class="modal-item-score" style="color:${scoreColor}">${score.toFixed(1)}</span>`
+              : '';
+            return `
             <div class="modal-item">
               <div class="modal-item-header">
                 <a href="https://nvd.nist.gov/vuln/detail/${k.cveID}" target="_blank" rel="noopener">${k.cveID}</a>
                 <span class="severity-badge sev-CRITICAL">EXPLOITED</span>
+                ${scoreHtml}
                 <span class="modal-item-date">${k.dateAdded || ''}</span>
               </div>
               <div class="modal-item-desc">${k.vulnerabilityName || k.shortDescription || 'No description'}</div>
               ${k.vendorProject ? `<div style="margin-top:5px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--warn)">⚠ Affected: ${k.vendorProject}${k.product ? ' ' + k.product : ''}</div>` : ''}
             </div>
-          `).join('');
+          `;
+          }).join('');
         }
       }
 
