@@ -2440,7 +2440,9 @@
       const desc = v.cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
       const shortDesc = desc.length > 200 ? desc.substring(0, 200) + '...' : desc;
       const published = v.cve.published?.substring(0, 10) || '';
-      const scoreColor = score >= 9 ? 'var(--critical)' : score >= 7 ? 'var(--high)' : score >= 4 ? 'var(--medium)' : 'var(--low)';
+      const scoreColor = score >= 9 ? 'var(--critical)' : score >= 7 ? 'var(--high)' : score >= 4 ? 'var(--medium)' : score > 0 ? 'var(--low)' : 'var(--muted)';
+      const scoreText = score > 0 ? score.toFixed(1) : 'N/A';
+      const sevText = score > 0 ? sev : 'N/A';
       const affected = getAffectedProducts(v);
       const affectedHtml = affected.length > 0
         ? `<div style="margin-top:5px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--warn)">⚠ Affected: ${affected.join(', ')}</div>`
@@ -2449,8 +2451,8 @@
         <div class="modal-item">
           <div class="modal-item-header">
             <a href="${getCveLink(v.cve.id)}" target="_blank" rel="noopener">${v.cve.id}</a>
-            <span class="severity-badge sev-${sev}">${sev}</span>
-            <span class="modal-item-score" style="color:${scoreColor}">${score.toFixed(1)}</span>
+            <span class="severity-badge sev-${sev}">${sevText}</span>
+            <span class="modal-item-score" style="color:${scoreColor}">${scoreText}</span>
             <span class="modal-item-date">${published}</span>
           </div>
           <div class="modal-item-desc">${shortDesc}</div>
