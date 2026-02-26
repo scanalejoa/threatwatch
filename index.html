@@ -864,6 +864,81 @@
       border-color: var(--accent2);
     }
 
+    .export-btn {
+      background: transparent;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      padding: 0 12px;
+      height: 32px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 1px;
+      display: none;
+      align-items: center;
+      gap: 5px;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .export-btn:hover {
+      background: var(--accent);
+      color: var(--bg);
+    }
+
+    /* ── Print / PDF export ────────────────────────────── */
+    #print-area { display: none; }
+
+    @media print {
+      body > *:not(#print-area) { display: none !important; }
+      body::before { display: none !important; }
+
+      #print-area {
+        display: block !important;
+        padding: 24px;
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        color: #111;
+        background: #fff;
+      }
+
+      #print-area h1 { font-size: 16px; margin: 0 0 4px; }
+      #print-area .pr-meta { color: #666; font-size: 11px; margin-bottom: 16px; }
+
+      #print-area .pr-item {
+        border-bottom: 1px solid #ddd;
+        padding: 8px 0;
+        page-break-inside: avoid;
+      }
+
+      #print-area .pr-id {
+        font-weight: bold;
+        font-size: 13px;
+      }
+
+      #print-area .pr-sub {
+        color: #555;
+        font-size: 11px;
+        margin: 2px 0;
+      }
+
+      #print-area .pr-desc {
+        font-size: 12px;
+        margin-top: 3px;
+      }
+
+      #print-area .pr-section {
+        font-size: 10px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: #333;
+        border-bottom: 1px solid #999;
+        padding: 12px 0 4px;
+        margin: 8px 0 4px;
+        font-weight: bold;
+      }
+    }
+
     .modal-body {
       overflow-y: auto;
       flex: 1;
@@ -2262,6 +2337,8 @@
       const overlay = document.getElementById('modal-overlay');
       const title = document.getElementById('modal-title');
       const body = document.getElementById('modal-body');
+      document.getElementById('export-csv-btn').style.display = 'none';
+      document.getElementById('export-pdf-btn').style.display = 'none';
 
       title.textContent = `📊 ${vendor.toUpperCase()} — Vulnerabilities`;
       title.style.color = 'var(--accent)';
@@ -2486,6 +2563,8 @@
       const overlay = document.getElementById('modal-overlay');
       const title = document.getElementById('modal-title');
       const body = document.getElementById('modal-body');
+      document.getElementById('export-csv-btn').style.display = 'none';
+      document.getElementById('export-pdf-btn').style.display = 'none';
 
       if (type === 'KEV') {
         title.textContent = '🔴 CISA KEV — Actively Exploited';
@@ -2552,10 +2631,113 @@
 
     function closeModal() {
       document.getElementById('modal-overlay').classList.remove('active');
+      document.getElementById('export-csv-btn').style.display = 'none';
+      document.getElementById('export-pdf-btn').style.display = 'none';
     }
 
     // Close on Escape key
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+    // ── Search export state ──────────────────────────────────
+    let _lastSearchResults = null; // { query, allResults, kevResults }
+
+    function exportSearchCSV() {
+      if (!_lastSearchResults) return;
+      const { query, allResults, kevResults } = _lastSearchResults;
+
+      const rows = [['CVE ID', 'Severity', 'CVSS Score', 'Published', 'Source', 'KEV Exploited', 'Affected Products', 'Description']];
+
+      allResults.forEach(v => {
+        const score = getCvss(v);
+        rows.push([
+          v.cve.id || '',
+          score > 0 ? getSeverity(score) : 'N/A',
+          score > 0 ? score.toFixed(1) : 'N/A',
+          v.cve.published?.substring(0, 10) || '',
+          getSourceLabel(v).toUpperCase(),
+          v._kevExploited ? 'YES' : 'NO',
+          getAffectedProducts(v).join('; '),
+          (v.cve.descriptions?.find(d => d.lang === 'en')?.value || '').replace(/\r?\n/g, ' ')
+        ]);
+      });
+
+      // KEV entries not already in CVE results
+      const cveIds = new Set(allResults.map(v => v.cve.id));
+      kevResults.filter(k => !cveIds.has(k.cveID)).forEach(k => {
+        const nvdMatch = allCves.find(v => v.cve.id === k.cveID);
+        const score = nvdMatch ? getCvss(nvdMatch) : 0;
+        rows.push([
+          k.cveID || '',
+          score > 0 ? getSeverity(score) : 'N/A',
+          score > 0 ? score.toFixed(1) : 'N/A',
+          k.dateAdded || '',
+          'KEV',
+          'YES',
+          k.vendorProject ? (k.vendorProject + (k.product ? ' ' + k.product : '')) : '',
+          (k.vulnerabilityName || k.shortDescription || '').replace(/\r?\n/g, ' ')
+        ]);
+      });
+
+      const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `threatwatch-${query.replace(/[^a-z0-9]/gi, '_')}-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportSearchPDF() {
+      if (!_lastSearchResults) return;
+      const { query, allResults, kevResults } = _lastSearchResults;
+      const cveIds = new Set(allResults.map(v => v.cve.id));
+      const kevOnly = kevResults.filter(k => !cveIds.has(k.cveID));
+      const total = allResults.length + kevOnly.length;
+
+      let html = `<h1>ThreatWatch — Search: "${query}"</h1>`;
+      html += `<div class="pr-meta">${new Date().toISOString().replace('T', ' ').substring(0, 19)} UTC &nbsp;·&nbsp; ${total} finding${total !== 1 ? 's' : ''}</div>`;
+
+      if (allResults.length > 0) {
+        html += `<div class="pr-section">CVEs (${allResults.length})</div>`;
+        allResults.forEach(v => {
+          const score = getCvss(v);
+          const sev = score > 0 ? getSeverity(score) : 'N/A';
+          const scoreStr = score > 0 ? ` — CVSS ${score.toFixed(1)}` : '';
+          const desc = v.cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
+          const affected = getAffectedProducts(v);
+          const kev = v._kevExploited ? ' · ⚡ KEV EXPLOITED' : '';
+          html += `<div class="pr-item">
+            <div class="pr-id">${v.cve.id} &nbsp; ${sev}${scoreStr}${kev}</div>
+            <div class="pr-sub">${v.cve.published?.substring(0, 10) || ''} · ${getSourceLabel(v).toUpperCase()}${affected.length ? ' · ' + affected.join(', ') : ''}</div>
+            <div class="pr-desc">${desc}</div>
+          </div>`;
+        });
+      }
+
+      if (kevOnly.length > 0) {
+        html += `<div class="pr-section">CISA KEV — additional matches (${kevOnly.length})</div>`;
+        kevOnly.forEach(k => {
+          const nvdMatch = allCves.find(v => v.cve.id === k.cveID);
+          const score = nvdMatch ? getCvss(nvdMatch) : 0;
+          const scoreStr = score > 0 ? ` — CVSS ${score.toFixed(1)}` : '';
+          html += `<div class="pr-item">
+            <div class="pr-id">${k.cveID} &nbsp; EXPLOITED${scoreStr}</div>
+            <div class="pr-sub">${k.dateAdded || ''} · KEV${k.vendorProject ? ' · ' + k.vendorProject + (k.product ? ' ' + k.product : '') : ''}</div>
+            <div class="pr-desc">${k.vulnerabilityName || k.shortDescription || 'No description'}</div>
+          </div>`;
+        });
+      }
+
+      const printArea = document.getElementById('print-area');
+      printArea.innerHTML = html;
+      printArea.style.display = 'block';
+      window.addEventListener('afterprint', () => {
+        printArea.style.display = 'none';
+        printArea.innerHTML = '';
+      }, { once: true });
+      window.print();
+    }
 
     // ── Search ──────────────────────────────────────────────
     function renderCveItem(v) {
@@ -2785,15 +2967,28 @@
 
       body.innerHTML = html;
       addLog('SYNC', `Search complete: "${query}" — ${totalCve} CVEs, ${kevResults.length} KEV matches`);
+
+      // Store results and reveal export buttons
+      const allResults = [...cveResults, ...apiResults].sort((a, b) => getCvss(b) - getCvss(a));
+      _lastSearchResults = { query, allResults, kevResults };
+      document.getElementById('export-csv-btn').style.display = 'inline-flex';
+      document.getElementById('export-pdf-btn').style.display = 'inline-flex';
     }
   </script>
+
+  <!-- Print area (populated by exportSearchPDF, visible only during print) -->
+  <div id="print-area"></div>
 
   <!-- Modal -->
   <div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()">
     <div class="modal">
       <div class="modal-header">
         <div class="modal-title" id="modal-title">DETAILS</div>
-        <button class="modal-close" onclick="closeModal()">✕</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="export-csv-btn" class="export-btn" onclick="exportSearchCSV()" title="Export results as CSV">↓ CSV</button>
+          <button id="export-pdf-btn" class="export-btn" onclick="exportSearchPDF()" title="Print / Save as PDF">↓ PDF</button>
+          <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
       </div>
       <div class="modal-body" id="modal-body"></div>
     </div>
