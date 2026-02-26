@@ -1100,6 +1100,55 @@
 
     .custom-dates.visible {
       display: flex;
+      flex-wrap: wrap;
+      row-gap: 6px;
+    }
+
+    .custom-keyword-row {
+      display: none;
+      width: 100%;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .custom-keyword-row.visible {
+      display: flex;
+    }
+
+    .keyword-notice {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      color: var(--warn);
+      white-space: nowrap;
+    }
+
+    .keyword-input {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      padding: 5px 10px;
+      background: var(--surface);
+      border: 1px solid var(--warn);
+      border-radius: 3px;
+      color: var(--text);
+      outline: none;
+      flex: 1;
+      min-width: 180px;
+      max-width: 320px;
+    }
+
+    .keyword-input:focus {
+      border-color: var(--accent);
+    }
+
+    .keyword-input.error {
+      border-color: var(--critical);
+      animation: shake 0.3s ease;
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-4px); }
+      75% { transform: translateX(4px); }
     }
 
     .date-input {
@@ -1523,10 +1572,16 @@
         <button class="rtab" id="rtab-custom" onclick="toggleCustomRange(this)">CUSTOM</button>
       </div>
       <div class="custom-dates" id="custom-dates">
-        <input type="date" class="date-input" id="date-start">
+        <input type="date" class="date-input" id="date-start" onchange="checkCustomRangeLength()">
         <span class="range-label">TO</span>
-        <input type="date" class="date-input" id="date-end">
+        <input type="date" class="date-input" id="date-end" onchange="checkCustomRangeLength()">
         <button class="date-go" onclick="loadCustomRange()">LOAD</button>
+        <div class="custom-keyword-row" id="custom-keyword-row">
+          <span class="keyword-notice">⚠ Range &gt;90 days — keyword required:</span>
+          <input type="text" class="keyword-input" id="custom-keyword"
+            placeholder="e.g. apache, fortinet, log4j (full words only)"
+            onkeydown="if(event.key==='Enter')loadCustomRange()">
+        </div>
       </div>
       <span class="range-label" id="range-info" style="margin-left:auto;color:var(--accent)"></span>
     </div>
@@ -1696,8 +1751,11 @@
     // ── Date Range ─────────────────────────────────────────
     let currentRangeDays = 7;
 
+    let _currentLoadKeyword = '';
+
     function setRange(days, btn) {
       currentRangeDays = days;
+      _currentLoadKeyword = '';
       document.querySelectorAll('.rtab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById('custom-dates').classList.remove('visible');
@@ -1715,13 +1773,45 @@
       ago.setDate(ago.getDate() - 30);
       document.getElementById('date-end').value = today.toISOString().split('T')[0];
       document.getElementById('date-start').value = ago.toISOString().split('T')[0];
+      checkCustomRangeLength();
+    }
+
+    function checkCustomRangeLength() {
+      const startVal = document.getElementById('date-start').value;
+      const endVal = document.getElementById('date-end').value;
+      const kwRow = document.getElementById('custom-keyword-row');
+      if (!startVal || !endVal) { kwRow.classList.remove('visible'); return; }
+      const diffDays = (new Date(endVal) - new Date(startVal)) / (1000 * 60 * 60 * 24);
+      if (diffDays > 90) {
+        kwRow.classList.add('visible');
+      } else {
+        kwRow.classList.remove('visible');
+        document.getElementById('custom-keyword').value = '';
+      }
     }
 
     function loadCustomRange() {
       const startVal = document.getElementById('date-start').value;
       const endVal = document.getElementById('date-end').value;
       if (!startVal || !endVal) return;
-      currentRangeDays = -1; // flag for custom
+
+      const diffDays = (new Date(endVal) - new Date(startVal)) / (1000 * 60 * 60 * 24);
+
+      if (diffDays > 90) {
+        const kw = document.getElementById('custom-keyword').value.trim();
+        if (!kw) {
+          const inp = document.getElementById('custom-keyword');
+          inp.classList.add('error');
+          inp.focus();
+          setTimeout(() => inp.classList.remove('error'), 600);
+          return;
+        }
+        _currentLoadKeyword = kw;
+      } else {
+        _currentLoadKeyword = '';
+      }
+
+      currentRangeDays = -1;
       loadNVD(new Date(startVal), new Date(endVal + 'T23:59:59'));
     }
 
@@ -1744,13 +1834,17 @@
       document.getElementById('sync-status').textContent = 'SYNCING NVD...';
       document.getElementById('sync-status').style.color = 'var(--warn)';
 
-      // For auto-refresh when a custom range is active, re-read the date inputs
+      // For auto-refresh when a custom range is active, re-read the date inputs and keyword
       if (!customStart && currentRangeDays === -1) {
         const startVal = document.getElementById('date-start').value;
         const endVal = document.getElementById('date-end').value;
         if (startVal && endVal) {
           customStart = new Date(startVal);
           customEnd = new Date(endVal + 'T23:59:59');
+          // Recover keyword for long ranges
+          if (!_currentLoadKeyword) {
+            _currentLoadKeyword = document.getElementById('custom-keyword').value.trim();
+          }
         } else {
           currentRangeDays = 7;
         }
@@ -1761,7 +1855,7 @@
       if (!customStart) startDate.setDate(endDate.getDate() - currentRangeDays);
 
       const rangeLabel = customStart
-        ? `${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`
+        ? `${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}${_currentLoadKeyword ? ` [${_currentLoadKeyword}]` : ''}`
         : `last ${currentRangeDays} days`;
 
       addLog('SYNC', `Fetching NVD data (${rangeLabel})...`);
@@ -1798,7 +1892,8 @@
           }
 
           const chunk = chunks[ci];
-          const baseUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?pubStartDate=${chunk.start}&pubEndDate=${chunk.end}&resultsPerPage=${NVD_PER_PAGE}`;
+          const kwParam = _currentLoadKeyword ? `&keywordSearch=${encodeURIComponent(_currentLoadKeyword)}` : '';
+          const baseUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?pubStartDate=${chunk.start}&pubEndDate=${chunk.end}${kwParam}&resultsPerPage=${NVD_PER_PAGE}`;
           const chunkLabel = chunks.length > 1 ? `Chunk ${ci + 1}/${chunks.length} · ` : '';
 
           let startIndex = 0;
@@ -2107,7 +2202,17 @@
     // ── Merge external CVEs into allCves ───────────────────
     function mergeExternalCves(incoming) {
       const existing = new Set(allCves.map(v => v.cve.id));
-      const newOnes = incoming.filter(v => !existing.has(v.cve.id));
+      let newOnes = incoming.filter(v => !existing.has(v.cve.id));
+      // When a keyword filter is active (long custom range), apply it to external sources too
+      if (_currentLoadKeyword) {
+        const kw = _currentLoadKeyword.toLowerCase();
+        newOnes = newOnes.filter(v => {
+          const id = (v.cve.id || '').toLowerCase();
+          const desc = (v.cve.descriptions?.find(d => d.lang === 'en')?.value || '').toLowerCase();
+          const vendor = getVendor(v).toLowerCase();
+          return id.includes(kw) || desc.includes(kw) || vendor.includes(kw);
+        });
+      }
       if (newOnes.length > 0) {
         allCves = [...allCves, ...newOnes];
         renderCves();
