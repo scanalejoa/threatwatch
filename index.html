@@ -1500,7 +1500,10 @@
       <!-- Unified Vulnerability Feed -->
       <div class="panel" style="grid-column: 1 / -1">
         <div class="panel-header">
-          <div class="panel-title">⚡ All Vulnerabilities</div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <div class="panel-title">⚡ All Vulnerabilities</div>
+            <span id="cve-count-label" style="font-size:11px;color:var(--muted);font-family:'Share Tech Mono',monospace"></span>
+          </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <div class="filter-tabs">
               <button class="ftab active" onclick="filterSeverity('ALL', this)">ALL</button>
@@ -1648,12 +1651,35 @@
     }
 
     // ── NVD API ──────────────────────────────────────────
+    let _nvdCancelFlag = false;
+    const NVD_PER_PAGE = 2000;
+    const NVD_RATE_DELAY_MS = 6500; // 5 req/30s → ~6s between requests
+    const NVD_MAX_PAGES = 50;       // safety cap: 50 pages = 100K CVEs max
+
     async function loadNVD(customStart, customEnd) {
+      // Cancel any in-progress load
+      _nvdCancelFlag = true;
+      await new Promise(r => setTimeout(r, 100));
+      _nvdCancelFlag = false;
+
       const btn = document.getElementById('refresh-nvd');
-      btn.disabled = true;
-      btn.textContent = '↻ LOADING';
+      btn.disabled = false;
+      btn.textContent = '⏹ CANCEL';
+      btn.onclick = () => { _nvdCancelFlag = true; };
       document.getElementById('sync-status').textContent = 'SYNCING NVD...';
       document.getElementById('sync-status').style.color = 'var(--warn)';
+
+      // For auto-refresh when a custom range is active, re-read the date inputs
+      if (!customStart && currentRangeDays === -1) {
+        const startVal = document.getElementById('date-start').value;
+        const endVal = document.getElementById('date-end').value;
+        if (startVal && endVal) {
+          customStart = new Date(startVal);
+          customEnd = new Date(endVal + 'T23:59:59');
+        } else {
+          currentRangeDays = 7;
+        }
+      }
 
       const endDate = customEnd || new Date();
       const startDate = customStart || new Date();
@@ -1667,32 +1693,112 @@
       document.getElementById('range-info').textContent = `Loading ${rangeLabel}...`;
 
       try {
-        const start = startDate.toISOString().split('.')[0] + '.000';
-        const end = endDate.toISOString().split('.')[0] + '.000';
-        const perPage = currentRangeDays <= 7 ? 2000 : currentRangeDays <= 30 ? 2000 : 2000;
+        // NVD API enforces a 120-day maximum date range per request.
+        // Split larger ranges into sequential 119-day chunks.
+        const NVD_CHUNK_DAYS = 119;
+        const chunks = [];
+        let cs = new Date(startDate);
+        while (cs <= endDate) {
+          const ce = new Date(cs);
+          ce.setDate(ce.getDate() + NVD_CHUNK_DAYS);
+          chunks.push({
+            start: cs.toISOString().split('T')[0] + 'T00:00:00.000',
+            end: (ce > endDate ? endDate : ce).toISOString().split('T')[0] + 'T23:59:59.000'
+          });
+          cs = new Date(ce);
+          cs.setDate(cs.getDate() + 1);
+        }
+        if (chunks.length > 1) {
+          addLog('SYNC', `Date range split into ${chunks.length} chunks (NVD API max: 120 days/request)`);
+        }
 
-        const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?pubStartDate=${start}&pubEndDate=${end}&resultsPerPage=${perPage}`;
+        let allNvdResults = [];
+        let grandTotal = 0;
+        let isFirstRequest = true;
 
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
+        for (let ci = 0; ci < chunks.length; ci++) {
+          if (_nvdCancelFlag) {
+            addLog('SYNC', `NVD load cancelled after ${allNvdResults.length} CVEs`);
+            break;
+          }
 
-        const nvdResults = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'nvd' }));
-        // Preserve entries from external sources (KEV, GitHub, Palo Alto)
+          const chunk = chunks[ci];
+          const baseUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?pubStartDate=${chunk.start}&pubEndDate=${chunk.end}&resultsPerPage=${NVD_PER_PAGE}`;
+          const chunkLabel = chunks.length > 1 ? `Chunk ${ci + 1}/${chunks.length} · ` : '';
+
+          let startIndex = 0;
+          let totalResults = null;
+          let page = 0;
+
+          while (true) {
+            if (_nvdCancelFlag) {
+              addLog('SYNC', `NVD load cancelled after ${allNvdResults.length} CVEs`);
+              break;
+            }
+
+            // Rate limit: delay before every request except the very first
+            if (!isFirstRequest) {
+              addLog('SYNC', `Rate limit pause (${(NVD_RATE_DELAY_MS / 1000).toFixed(1)}s)...`);
+              await new Promise(r => setTimeout(r, NVD_RATE_DELAY_MS));
+            }
+            isFirstRequest = false;
+
+            const url = `${baseUrl}&startIndex=${startIndex}`;
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            if (totalResults === null) {
+              totalResults = data.totalResults || 0;
+              grandTotal += totalResults;
+              const totalPages = Math.min(Math.ceil(totalResults / NVD_PER_PAGE), NVD_MAX_PAGES);
+              addLog('SYNC', `${chunkLabel}${totalResults.toLocaleString()} CVEs found — fetching ${totalPages} page(s)`);
+            }
+
+            const batch = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'nvd' }));
+            allNvdResults = [...allNvdResults, ...batch];
+            page++;
+
+            const totalPages = Math.min(Math.ceil((totalResults || 0) / NVD_PER_PAGE), NVD_MAX_PAGES);
+            const pct = totalPages > 0 ? Math.round((page / totalPages) * 100) : 100;
+            document.getElementById('range-info').textContent = `${chunkLabel}Page ${page}/${totalPages} · ${allNvdResults.length.toLocaleString()} CVEs loaded`;
+            btn.textContent = `⏹ ${pct}%`;
+
+            // Update the display incrementally every page
+            const externalCves = allCves.filter(v => v._source && v._source !== 'nvd');
+            allCves = [...allNvdResults, ...externalCves];
+            renderCves();
+            renderStats();
+            renderVendorChart();
+            renderDonut();
+
+            startIndex += NVD_PER_PAGE;
+            if (startIndex >= (totalResults || 0) || page >= NVD_MAX_PAGES) break;
+            if (batch.length === 0) break;
+          }
+        }
+
+        // Final state
         const externalCves = allCves.filter(v => v._source && v._source !== 'nvd');
-        allCves = [...nvdResults, ...externalCves];
-        const totalResults = data.totalResults || nvdResults.length;
-        addLog('SYNC', `NVD sync complete — ${nvdResults.length} of ${totalResults} CVEs loaded (${rangeLabel})`);
-        addLog('CVE', `Highest CVSS: ${getTopCvss(allCves)}`);
-        document.getElementById('sync-status').textContent = '✓ NVD SYNCED';
-        document.getElementById('sync-status').style.color = 'var(--accent3)';
-        document.getElementById('range-info').textContent = `${nvdResults.length} NVD + ${externalCves.length} external = ${allCves.length} total (${rangeLabel})`;
+        allCves = [...allNvdResults, ...externalCves];
+        const loaded = allNvdResults.length;
+
+        if (_nvdCancelFlag) {
+          document.getElementById('sync-status').textContent = `⏹ CANCELLED (${loaded.toLocaleString()})`;
+          document.getElementById('sync-status').style.color = 'var(--warn)';
+        } else {
+          addLog('SYNC', `NVD sync complete — ${loaded.toLocaleString()} CVEs loaded (${rangeLabel})`);
+          addLog('CVE', `Highest CVSS: ${getTopCvss(allCves)}`);
+          document.getElementById('sync-status').textContent = '✓ NVD SYNCED';
+          document.getElementById('sync-status').style.color = 'var(--accent3)';
+        }
+        document.getElementById('range-info').textContent = `${loaded.toLocaleString()} NVD + ${externalCves.length} external = ${allCves.length.toLocaleString()} total (${rangeLabel})`;
 
         renderCves();
         renderStats();
         renderVendorChart();
         renderDonut();
-        setSourceStatus('nvd', true, nvdResults.length);
+        setSourceStatus('nvd', true, loaded);
       } catch (e) {
         addLog('ALERT', `NVD API error: ${e.message} — Loading demo data`);
         document.getElementById('sync-status').textContent = 'DEMO MODE';
@@ -1704,6 +1810,7 @@
 
       btn.disabled = false;
       btn.textContent = '↻ REFRESH';
+      btn.onclick = () => loadNVD();
     }
 
     function getTopCvss(cves) {
@@ -1723,8 +1830,16 @@
         const resp = await fetch(proxyUrl(kevUrl));
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
-        const kevCutoff = new Date();
-        kevCutoff.setFullYear(kevCutoff.getFullYear() - 3);
+        // Use the dashboard's current date range if custom, otherwise last 3 years
+        let kevCutoff;
+        if (currentRangeDays === -1) {
+          const startVal = document.getElementById('date-start').value;
+          kevCutoff = startVal ? new Date(startVal) : new Date();
+          if (!startVal) kevCutoff.setFullYear(kevCutoff.getFullYear() - 3);
+        } else {
+          kevCutoff = new Date();
+          kevCutoff.setFullYear(kevCutoff.getFullYear() - 3);
+        }
         kevData = (data.vulnerabilities || []).filter(v => {
           const d = new Date(v.dateAdded || '');
           return !isNaN(d) && d >= kevCutoff;
@@ -2014,12 +2129,20 @@
       // Sort by CVSS desc
       cvesToShow.sort((a, b) => getCvss(b) - getCvss(a));
 
+      const countLabel = document.getElementById('cve-count-label');
       if (cvesToShow.length === 0) {
         feed.innerHTML = '<div class="error-msg">NO VULNERABILITIES MATCH FILTERS</div>';
+        if (countLabel) countLabel.textContent = '';
         return;
       }
 
-      feed.innerHTML = cvesToShow.slice(0, 60).map(v => {
+      if (countLabel) {
+        countLabel.textContent = cvesToShow.length > 200
+          ? `top 200 of ${cvesToShow.length.toLocaleString()} · sorted by CVSS`
+          : `${cvesToShow.length} entries`;
+      }
+
+      feed.innerHTML = cvesToShow.slice(0, 200).map(v => {
         const score = getCvss(v);
         const sev = getSeverity(score);
         const desc = v.cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
@@ -2509,10 +2632,16 @@
             if (isCveId) {
               apiUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${query.toUpperCase()}`;
             } else {
-              const searchCutoff = new Date();
-              searchCutoff.setFullYear(searchCutoff.getFullYear() - 3);
-              const cutoffStr = searchCutoff.toISOString().split('.')[0] + '.000';
-              apiUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&pubStartDate=${cutoffStr}&resultsPerPage=40`;
+              // Use dashboard date range if custom, otherwise search all time
+              let searchStart;
+              if (currentRangeDays === -1) {
+                const startVal = document.getElementById('date-start').value;
+                searchStart = startVal ? new Date(startVal) : new Date('2002-01-01');
+              } else {
+                searchStart = new Date('2002-01-01'); // NVD data goes back to ~2002
+              }
+              const cutoffStr = searchStart.toISOString().split('.')[0] + '.000';
+              apiUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&pubStartDate=${cutoffStr}&resultsPerPage=2000`;
             }
             const resp = await fetch(apiUrl);
             if (resp.ok) {
