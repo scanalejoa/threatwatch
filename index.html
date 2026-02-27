@@ -1756,11 +1756,14 @@
     let _currentLoadKeyword = '';
 
     function setRange(days, btn) {
+      const hadKeyword = !!_currentLoadKeyword;
       currentRangeDays = days;
       _currentLoadKeyword = '';
       document.querySelectorAll('.rtab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById('custom-dates').classList.remove('visible');
+      // If switching away from a keyword-filtered view, reload external sources so full data is restored.
+      if (hadKeyword) { loadKEV(); loadGitHub(); loadPaloAlto(); }
       loadNVD();
     }
 
@@ -1825,7 +1828,9 @@
       }
 
       currentRangeDays = -1;
-      loadNVD(new Date(startVal), new Date(endVal + 'T23:59:59'));
+      loadNVD(new Date(startVal), new Date(endVal + 'T23:59:59')).then(() => {
+        loadKEV(); loadGitHub(); loadPaloAlto();
+      });
     }
 
     // ── NVD API ──────────────────────────────────────────
@@ -1875,6 +1880,20 @@
       document.getElementById('range-info').textContent = `Loading ${rangeLabel}...`;
 
       try {
+        // Pre-filter external source entries when a keyword is active.
+        // Removes unrelated KEV/GitHub/PaloAlto entries that were loaded without a keyword at page init.
+        if (_currentLoadKeyword) {
+          const kw = _currentLoadKeyword.toLowerCase();
+          allCves = allCves.filter(v => {
+            if (v._source === 'nvd') return false;
+            const id = (v.cve.id || '').toLowerCase();
+            const desc = (v.cve.descriptions?.find(d => d.lang === 'en')?.value || '').toLowerCase();
+            const vendor = getVendor(v).toLowerCase();
+            return id.includes(kw) || desc.includes(kw) || vendor.includes(kw);
+          });
+          renderCves(); renderStats(); renderVendorChart(); renderDonut();
+        }
+
         // NVD API enforces a 120-day maximum date range per request.
         // Split larger ranges into sequential 119-day chunks.
         const NVD_CHUNK_DAYS = 119;
