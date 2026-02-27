@@ -1648,6 +1648,8 @@
               <button class="ftab" onclick="filterSource('github', this)">GITHUB</button>
               <button class="ftab" onclick="filterSource('paloalto', this)">PALOALTO</button>
             </div>
+            <button id="panel-export-csv-btn" class="export-btn" onclick="exportPanelCSV()" title="Export current view as CSV" style="display:inline-flex">↓ CSV</button>
+            <button id="panel-export-pdf-btn" class="export-btn" onclick="exportPanelPDF()" title="Print / Save as PDF" style="display:inline-flex">↓ PDF</button>
             <button class="refresh-btn" id="refresh-nvd" onclick="loadNVD()">↻ REFRESH</button>
           </div>
         </div>
@@ -1762,25 +1764,36 @@
       loadNVD();
     }
 
+    function _todayStr() { return new Date().toISOString().split('T')[0]; }
+
     function toggleCustomRange(btn) {
       document.querySelectorAll('.rtab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
       const cd = document.getElementById('custom-dates');
       cd.classList.add('visible');
+      // Cap both inputs to today — no future dates
+      const today = _todayStr();
+      document.getElementById('date-start').max = today;
+      document.getElementById('date-end').max = today;
       // Default to last 30 days
-      const today = new Date();
       const ago = new Date();
       ago.setDate(ago.getDate() - 30);
-      document.getElementById('date-end').value = today.toISOString().split('T')[0];
+      document.getElementById('date-end').value = today;
       document.getElementById('date-start').value = ago.toISOString().split('T')[0];
       checkCustomRangeLength();
     }
 
     function checkCustomRangeLength() {
-      const startVal = document.getElementById('date-start').value;
-      const endVal = document.getElementById('date-end').value;
+      const startInput = document.getElementById('date-start');
+      const endInput = document.getElementById('date-end');
+      let startVal = startInput.value;
+      let endVal = endInput.value;
       const kwRow = document.getElementById('custom-keyword-row');
       if (!startVal || !endVal) { kwRow.classList.remove('visible'); return; }
+      // Clamp end date to today if user typed a future date
+      const today = _todayStr();
+      if (endVal > today) { endInput.value = today; endVal = today; }
+      if (startVal > today) { startInput.value = today; startVal = today; }
       const diffDays = (new Date(endVal) - new Date(startVal)) / (1000 * 60 * 60 * 24);
       if (diffDays > 90) {
         kwRow.classList.add('visible');
@@ -2742,6 +2755,70 @@
 
     // Close on Escape key
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+    // ── Panel export (main CVE feed) ─────────────────────────
+    function _getPanelCves() {
+      let cvs = allCves.slice();
+      if (currentFilter !== 'ALL') cvs = cvs.filter(v => getSeverity(getCvss(v)) === currentFilter);
+      if (currentSourceFilter !== 'ALL') cvs = cvs.filter(v => getSourceLabel(v) === currentSourceFilter);
+      return cvs.sort((a, b) => getCvss(b) - getCvss(a));
+    }
+
+    function exportPanelCSV() {
+      const cvs = _getPanelCves();
+      if (cvs.length === 0) { addLog('ALERT', 'No CVEs to export'); return; }
+      const rows = [['CVE ID', 'Severity', 'CVSS Score', 'Published', 'Source', 'KEV Exploited', 'Affected Products', 'Description']];
+      cvs.forEach(v => {
+        const score = getCvss(v);
+        rows.push([
+          v.cve.id || '',
+          score > 0 ? getSeverity(score) : 'N/A',
+          score > 0 ? score.toFixed(1) : 'N/A',
+          v.cve.published?.substring(0, 10) || '',
+          getSourceLabel(v).toUpperCase(),
+          v._kevExploited ? 'YES' : 'NO',
+          getAffectedProducts(v).join('; '),
+          (v.cve.descriptions?.find(d => d.lang === 'en')?.value || '').replace(/\r?\n/g, ' ')
+        ]);
+      });
+      const rangeText = (document.getElementById('range-info').textContent || 'export').replace(/[^a-z0-9]/gi, '_').substring(0, 40);
+      const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `threatwatch-${rangeText}-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportPanelPDF() {
+      const cvs = _getPanelCves();
+      if (cvs.length === 0) { addLog('ALERT', 'No CVEs to export'); return; }
+      const rangeInfo = document.getElementById('range-info').textContent || '';
+      const total = cvs.length;
+      let html = `<h1>ThreatWatch — Vulnerability Report</h1>`;
+      html += `<div class="pr-meta">${new Date().toISOString().replace('T', ' ').substring(0, 19)} UTC · ${total.toLocaleString()} CVE${total !== 1 ? 's' : ''}${rangeInfo ? ' · ' + rangeInfo : ''}</div>`;
+      html += `<div class="pr-section">CVEs (${total.toLocaleString()})</div>`;
+      cvs.forEach(v => {
+        const score = getCvss(v);
+        const sev = score > 0 ? getSeverity(score) : 'N/A';
+        const scoreStr = score > 0 ? ` — CVSS ${score.toFixed(1)}` : '';
+        const desc = v.cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
+        const affected = getAffectedProducts(v);
+        const kev = v._kevExploited ? ' · ⚡ KEV EXPLOITED' : '';
+        html += `<div class="pr-item">
+          <div class="pr-id">${v.cve.id} &nbsp; ${sev}${scoreStr}${kev}</div>
+          <div class="pr-sub">${v.cve.published?.substring(0, 10) || ''} · ${getSourceLabel(v).toUpperCase()}${affected.length ? ' · ' + affected.join(', ') : ''}</div>
+          <div class="pr-desc">${desc}</div>
+        </div>`;
+      });
+      const printArea = document.getElementById('print-area');
+      printArea.innerHTML = html;
+      printArea.style.display = 'block';
+      window.addEventListener('afterprint', () => { printArea.style.display = 'none'; printArea.innerHTML = ''; }, { once: true });
+      window.print();
+    }
 
     // ── Search export state ──────────────────────────────────
     let _lastSearchResults = null; // { query, allResults, kevResults }
