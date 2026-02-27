@@ -1905,7 +1905,7 @@
           }
 
           const chunk = chunks[ci];
-          const kwParam = _currentLoadKeyword ? `&keywordSearch=${encodeURIComponent(_currentLoadKeyword)}` : '';
+          const kwParam = _currentLoadKeyword ? `&keywordSearch=${encodeURIComponent(_currentLoadKeyword)}&keywordExactMatch` : '';
           const baseUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?pubStartDate=${chunk.start}&pubEndDate=${chunk.end}${kwParam}&resultsPerPage=${NVD_PER_PAGE}`;
           const chunkLabel = chunks.length > 1 ? `Chunk ${ci + 1}/${chunks.length} · ` : '';
 
@@ -1983,12 +1983,23 @@
         renderDonut();
         setSourceStatus('nvd', true, loaded);
       } catch (e) {
-        addLog('ALERT', `NVD API error: ${e.message} — Loading demo data`);
-        document.getElementById('sync-status').textContent = 'DEMO MODE';
-        document.getElementById('sync-status').style.color = 'var(--warn)';
-        document.getElementById('range-info').textContent = 'DEMO MODE';
         setSourceStatus('nvd', false);
-        loadDemoData();
+        if (_currentLoadKeyword) {
+          // Keyword-filtered load — don't inject demo data; it would show unrelated fake CVEs.
+          // Clear any partial NVD results accumulated before the error.
+          allCves = allCves.filter(v => v._source !== 'nvd');
+          addLog('ALERT', `NVD API error: ${e.message}`);
+          document.getElementById('sync-status').textContent = 'NVD OFFLINE';
+          document.getElementById('sync-status').style.color = 'var(--warn)';
+          document.getElementById('range-info').textContent = 'NVD offline — external results only';
+          renderCves(); renderStats(); renderVendorChart(); renderDonut();
+        } else {
+          addLog('ALERT', `NVD API error: ${e.message} — Loading demo data`);
+          document.getElementById('sync-status').textContent = 'DEMO MODE';
+          document.getElementById('sync-status').style.color = 'var(--warn)';
+          document.getElementById('range-info').textContent = 'DEMO MODE';
+          loadDemoData();
+        }
       }
 
       btn.disabled = false;
@@ -2304,6 +2315,7 @@
 
     function renderCves() {
       const feed = document.getElementById('cve-feed');
+      const savedScrollTop = feed.scrollTop; // preserve scroll — innerHTML replace resets it to 0
       let cvesToShow = allCves;
 
       // Severity filter
@@ -2362,6 +2374,7 @@
       <div class="cvss-score" style="color:${score >= 9 ? 'var(--critical)' : score >= 7 ? 'var(--high)' : score >= 4 ? 'var(--medium)' : score > 0 ? 'var(--low)' : 'var(--muted)'}">${score > 0 ? score.toFixed(1) : 'N/A'}</div>
     </div>`;
       }).join('');
+      feed.scrollTop = savedScrollTop; // restore so incremental page loads don't jump to top
 
       // Log new criticals
       const criticals = cvesToShow.filter(v => getCvss(v) >= 9);
