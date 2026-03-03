@@ -1894,6 +1894,38 @@
           renderCves(); renderStats(); renderVendorChart(); renderDonut();
         }
 
+        // CVE ID direct lookup — bypasses chunking, date range, and keyword search entirely.
+        // Accepts "CVE-2021-23017", "cve-2021-23017", or bare "2021-23017".
+        const cveIdMatch = _currentLoadKeyword && _currentLoadKeyword.match(/^(?:CVE-)?(\d{4}-\d+)$/i);
+        if (cveIdMatch) {
+          const cveId = `CVE-${cveIdMatch[1].toUpperCase()}`;
+          addLog('SYNC', `CVE ID detected — direct lookup: ${cveId}`);
+          document.getElementById('range-info').textContent = `Looking up ${cveId}...`;
+          const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${encodeURIComponent(cveId)}`;
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          const found = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'nvd' }));
+          const externalCves = allCves.filter(v => v._source && v._source !== 'nvd');
+          allCves = [...found, ...externalCves];
+          if (found.length > 0) {
+            const score = getCvss(found[0]);
+            addLog('CVE', `${cveId} — CVSS ${score > 0 ? score : 'N/A'} (${getSeverity(score)})`);
+            document.getElementById('range-info').textContent = `${cveId} — CVSS ${score > 0 ? score : 'N/A'}`;
+            document.getElementById('sync-status').textContent = '✓ NVD SYNCED';
+            document.getElementById('sync-status').style.color = 'var(--accent3)';
+            setSourceStatus('nvd', true, 1);
+          } else {
+            addLog('ALERT', `${cveId} not found in NVD`);
+            document.getElementById('range-info').textContent = `${cveId} not found in NVD`;
+            document.getElementById('sync-status').textContent = 'NOT FOUND';
+            document.getElementById('sync-status').style.color = 'var(--warn)';
+            setSourceStatus('nvd', false);
+          }
+          renderCves(); renderStats(); renderVendorChart(); renderDonut();
+          return;
+        }
+
         // NVD API enforces a 120-day maximum date range per request.
         // Split larger ranges into sequential 119-day chunks.
         const NVD_CHUNK_DAYS = 119;
@@ -2019,11 +2051,11 @@
           document.getElementById('range-info').textContent = 'DEMO MODE';
           loadDemoData();
         }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '↻ REFRESH';
+        btn.onclick = () => loadNVD();
       }
-
-      btn.disabled = false;
-      btn.textContent = '↻ REFRESH';
-      btn.onclick = () => loadNVD();
     }
 
     function getTopCvss(cves) {
