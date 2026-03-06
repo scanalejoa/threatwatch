@@ -1183,6 +1183,34 @@
       background: rgba(0, 212, 255, 0.25);
     }
 
+    /* NVD Loading Progress Bar */
+    .nvd-progress-bar {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 2px;
+      margin-bottom: 14px;
+      overflow: hidden;
+      display: none;
+    }
+    .nvd-progress-bar.active { display: block; }
+    .nvd-progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 2px;
+      background: var(--warn);
+      box-shadow: 0 0 10px var(--warn);
+      transition: width 0.35s ease-out, background-color 0.3s, box-shadow 0.3s;
+    }
+    .nvd-progress-fill.complete {
+      background: var(--accent3);
+      box-shadow: 0 0 10px var(--accent3);
+    }
+    @keyframes nvd-pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.65; }
+    }
+    .nvd-progress-fill.loading { animation: nvd-pulse 1.2s ease-in-out infinite; }
+
     /* Source Status Bar */
     .source-bar {
       display: flex;
@@ -1575,15 +1603,21 @@
         <input type="date" class="date-input" id="date-start" onchange="checkCustomRangeLength()">
         <span class="range-label">TO</span>
         <input type="date" class="date-input" id="date-end" onchange="checkCustomRangeLength()">
-        <button class="date-go" onclick="loadCustomRange()">LOAD</button>
+        <button class="date-go" id="load-btn-dates" onclick="loadCustomRange()">LOAD</button>
         <div class="custom-keyword-row" id="custom-keyword-row">
           <span class="keyword-notice">⚠ Range &gt;90 days — keyword required:</span>
           <input type="text" class="keyword-input" id="custom-keyword"
             placeholder="e.g. apache, fortinet, log4j (full words only)"
             onkeydown="if(event.key==='Enter')loadCustomRange()">
+          <button class="date-go" id="load-btn-kw" onclick="loadCustomRange()" style="display:none">LOAD</button>
         </div>
       </div>
       <span class="range-label" id="range-info" style="margin-left:auto;color:var(--accent)"></span>
+    </div>
+
+    <!-- NVD loading progress bar — spans full dashboard width -->
+    <div class="nvd-progress-bar" id="nvd-progress-bar">
+      <div class="nvd-progress-fill" id="nvd-progress-fill"></div>
     </div>
 
     <!-- Source Status -->
@@ -1769,6 +1803,27 @@
 
     function _todayStr() { return new Date().toISOString().split('T')[0]; }
 
+    function _setNvdProgress(pct, done) {
+      const bar  = document.getElementById('nvd-progress-bar');
+      const fill = document.getElementById('nvd-progress-fill');
+      if (!bar) return;
+      if (pct === null) {
+        bar.classList.remove('active');
+        fill.style.width = '0%';
+        fill.classList.remove('loading', 'complete');
+        return;
+      }
+      bar.classList.add('active');
+      fill.style.width = pct + '%';
+      if (done) {
+        fill.classList.remove('loading');
+        fill.classList.add('complete');
+      } else {
+        fill.classList.add('loading');
+        fill.classList.remove('complete');
+      }
+    }
+
     function toggleCustomRange(btn) {
       document.querySelectorAll('.rtab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
@@ -1800,9 +1855,13 @@
       const diffDays = (new Date(endVal) - new Date(startVal)) / (1000 * 60 * 60 * 24);
       if (diffDays > 90) {
         kwRow.classList.add('visible');
+        document.getElementById('load-btn-dates').style.display = 'none';
+        document.getElementById('load-btn-kw').style.display = '';
       } else {
         kwRow.classList.remove('visible');
         document.getElementById('custom-keyword').value = '';
+        document.getElementById('load-btn-dates').style.display = '';
+        document.getElementById('load-btn-kw').style.display = 'none';
       }
     }
 
@@ -1851,6 +1910,7 @@
       btn.onclick = () => { _nvdCancelFlag = true; };
       document.getElementById('sync-status').textContent = 'SYNCING NVD...';
       document.getElementById('sync-status').style.color = 'var(--warn)';
+      _setNvdProgress(0);
 
       // For auto-refresh when a custom range is active, re-read the date inputs and keyword
       if (!customStart && currentRangeDays === -1) {
@@ -1923,6 +1983,8 @@
             setSourceStatus('nvd', false);
           }
           renderCves(); renderStats(); renderVendorChart(); renderDonut();
+          _setNvdProgress(100, found.length > 0);
+          setTimeout(() => _setNvdProgress(null), 1500);
           return;
         }
 
@@ -1998,6 +2060,7 @@
             const globalPct = Math.round(((ci + (totalPages > 0 ? page / totalPages : 1)) / chunks.length) * 100);
             document.getElementById('range-info').textContent = `${chunkLabel}Page ${page}/${totalPages} · ${allNvdResults.length.toLocaleString()} CVEs loaded`;
             btn.textContent = `⏹ ${globalPct}%`;
+            _setNvdProgress(globalPct);
 
             // Update the display incrementally every page
             const externalCves = allCves.filter(v => v._source && v._source !== 'nvd');
@@ -2021,11 +2084,14 @@
         if (_nvdCancelFlag) {
           document.getElementById('sync-status').textContent = `⏹ CANCELLED (${loaded.toLocaleString()})`;
           document.getElementById('sync-status').style.color = 'var(--warn)';
+          _setNvdProgress(null);
         } else {
           addLog('SYNC', `NVD sync complete — ${loaded.toLocaleString()} CVEs loaded (${rangeLabel})`);
           addLog('CVE', `Highest CVSS: ${getTopCvss(allCves)}`);
           document.getElementById('sync-status').textContent = '✓ NVD SYNCED';
           document.getElementById('sync-status').style.color = 'var(--accent3)';
+          _setNvdProgress(100, true);
+          setTimeout(() => _setNvdProgress(null), 1500);
         }
         document.getElementById('range-info').textContent = `${loaded.toLocaleString()} NVD + ${externalCves.length} external = ${allCves.length.toLocaleString()} total (${rangeLabel})`;
 
@@ -2035,6 +2101,7 @@
         renderDonut();
         setSourceStatus('nvd', true, loaded);
       } catch (e) {
+        _setNvdProgress(null);
         setSourceStatus('nvd', false);
         if (_currentLoadKeyword) {
           // Keyword-filtered load — don't inject demo data; it would show unrelated fake CVEs.
