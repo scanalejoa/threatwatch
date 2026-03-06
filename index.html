@@ -1203,6 +1203,9 @@
       background: var(--warn);
       box-shadow: 0 0 10px var(--warn);
       transition: width 0.35s ease-out, background-color 0.3s, box-shadow 0.3s;
+      display: flex;
+      align-items: center;
+      overflow: visible;
     }
     .nvd-progress-fill.complete {
       background: var(--accent3);
@@ -1210,13 +1213,12 @@
     }
     .nvd-progress-label {
       position: absolute;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
+      left: 8px;
+      white-space: nowrap;
       font-family: 'Share Tech Mono', monospace;
       font-size: 11px;
       letter-spacing: 2px;
-      color: rgba(0, 0, 0, 0.75);
-      white-space: nowrap;
+      color: rgba(0, 0, 0, 0.8);
       pointer-events: none;
     }
     @keyframes nvd-pulse {
@@ -1631,8 +1633,9 @@
 
     <!-- NVD loading progress bar — spans full dashboard width -->
     <div class="nvd-progress-bar" id="nvd-progress-bar">
-      <div class="nvd-progress-fill" id="nvd-progress-fill"></div>
-      <span class="nvd-progress-label" id="nvd-progress-label"></span>
+      <div class="nvd-progress-fill" id="nvd-progress-fill">
+        <span class="nvd-progress-label" id="nvd-progress-label"></span>
+      </div>
     </div>
 
     <!-- Source Status -->
