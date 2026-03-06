@@ -1839,7 +1839,7 @@
       } else {
         fill.classList.add('loading');
         fill.classList.remove('complete');
-        if (label) label.textContent = `LOADING  ${pct}%`;
+        if (label) label.textContent = `${pct}%`;
       }
     }
 
@@ -2078,7 +2078,7 @@
             // Global progress: (chunks done + fraction of current chunk) / total chunks
             const globalPct = Math.round(((ci + (totalPages > 0 ? page / totalPages : 1)) / chunks.length) * 100);
             document.getElementById('range-info').textContent = `${chunkLabel}Page ${page}/${totalPages} · ${allNvdResults.length.toLocaleString()} CVEs loaded`;
-            btn.textContent = `⏹ ${globalPct}%`;
+            btn.textContent = 'SEARCHING';
             _setNvdProgress(globalPct);
 
             // Update the display incrementally every page
