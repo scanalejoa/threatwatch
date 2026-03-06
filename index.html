@@ -1994,9 +1994,10 @@
             page++;
 
             const totalPages = Math.min(Math.ceil((totalResults || 0) / NVD_PER_PAGE), NVD_MAX_PAGES);
-            const pct = totalPages > 0 ? Math.round((page / totalPages) * 100) : 100;
+            // Global progress: (chunks done + fraction of current chunk) / total chunks
+            const globalPct = Math.round(((ci + (totalPages > 0 ? page / totalPages : 1)) / chunks.length) * 100);
             document.getElementById('range-info').textContent = `${chunkLabel}Page ${page}/${totalPages} · ${allNvdResults.length.toLocaleString()} CVEs loaded`;
-            btn.textContent = `⏹ ${pct}%`;
+            btn.textContent = `⏹ ${globalPct}%`;
 
             // Update the display incrementally every page
             const externalCves = allCves.filter(v => v._source && v._source !== 'nvd');
@@ -2731,8 +2732,9 @@
       loadPaloAlto();
     });
 
-    // Auto-refresh every 5 minutes
+    // Auto-refresh every 5 minutes — skip when user has a custom range or keyword search active
     setInterval(() => {
+      if (currentRangeDays === -1 || _currentLoadKeyword) return;
       addLog('SYNC', 'Auto-refresh triggered (5 min interval)');
       loadNVD().then(() => {
         loadKEV();
