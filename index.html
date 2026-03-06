@@ -1191,10 +1191,13 @@
       margin-bottom: 14px;
       overflow: hidden;
       display: none;
+      position: relative;
+      transition: height 0.15s ease;
     }
-    .nvd-progress-bar.active { display: block; }
+    .nvd-progress-bar.active { display: block; height: 22px; }
     .nvd-progress-fill {
-      height: 100%;
+      position: absolute;
+      top: 0; left: 0; bottom: 0;
       width: 0%;
       border-radius: 2px;
       background: var(--warn);
@@ -1204,6 +1207,17 @@
     .nvd-progress-fill.complete {
       background: var(--accent3);
       box-shadow: 0 0 10px var(--accent3);
+    }
+    .nvd-progress-label {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 2px;
+      color: rgba(0, 0, 0, 0.75);
+      white-space: nowrap;
+      pointer-events: none;
     }
     @keyframes nvd-pulse {
       0%, 100% { opacity: 1; }
@@ -1618,6 +1632,7 @@
     <!-- NVD loading progress bar — spans full dashboard width -->
     <div class="nvd-progress-bar" id="nvd-progress-bar">
       <div class="nvd-progress-fill" id="nvd-progress-fill"></div>
+      <span class="nvd-progress-label" id="nvd-progress-label"></span>
     </div>
 
     <!-- Source Status -->
@@ -1804,13 +1819,15 @@
     function _todayStr() { return new Date().toISOString().split('T')[0]; }
 
     function _setNvdProgress(pct, done) {
-      const bar  = document.getElementById('nvd-progress-bar');
-      const fill = document.getElementById('nvd-progress-fill');
+      const bar   = document.getElementById('nvd-progress-bar');
+      const fill  = document.getElementById('nvd-progress-fill');
+      const label = document.getElementById('nvd-progress-label');
       if (!bar) return;
       if (pct === null) {
         bar.classList.remove('active');
         fill.style.width = '0%';
         fill.classList.remove('loading', 'complete');
+        if (label) label.textContent = '';
         return;
       }
       bar.classList.add('active');
@@ -1818,9 +1835,11 @@
       if (done) {
         fill.classList.remove('loading');
         fill.classList.add('complete');
+        if (label) label.textContent = 'COMPLETE';
       } else {
         fill.classList.add('loading');
         fill.classList.remove('complete');
+        if (label) label.textContent = `LOADING  ${pct}%`;
       }
     }
 
