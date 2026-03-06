@@ -2006,7 +2006,6 @@
           }
           renderCves(); renderStats(); renderVendorChart(); renderDonut();
           _setNvdProgress(100, found.length > 0);
-          setTimeout(() => _setNvdProgress(null), 1500);
           return;
         }
 
@@ -2113,7 +2112,6 @@
           document.getElementById('sync-status').textContent = '✓ NVD SYNCED';
           document.getElementById('sync-status').style.color = 'var(--accent3)';
           _setNvdProgress(100, true);
-          setTimeout(() => _setNvdProgress(null), 1500);
         }
         document.getElementById('range-info').textContent = `${loaded.toLocaleString()} NVD + ${externalCves.length} external = ${allCves.length.toLocaleString()} total (${rangeLabel})`;
 
