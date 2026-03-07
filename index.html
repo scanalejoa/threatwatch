@@ -2339,19 +2339,25 @@
       try {
         const after = new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0];
         const url = `https://access.redhat.com/labs/securitydataapi/cve.json?after=${after}&per_page=100`;
-        const resp = await fetch(proxyUrl(url));
+        // Try direct first — Red Hat Security Data API supports CORS
+        let resp;
+        try {
+          resp = await fetch(url, { headers: { Accept: 'application/json' } });
+          if (!resp.ok) throw new Error('direct failed');
+        } catch {
+          resp = await fetch(proxyUrl(url));
+        }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
 
+        // API returns an array of CVE summary objects.
+        // Top-level fields: CVE, severity, public_date, cvss3_score, cvss_score,
+        //                   bugzilla_description, affected_packages
         const cves = (Array.isArray(data) ? data : [])
           .filter(c => c.CVE && /^CVE-/i.test(c.CVE))
           .map(c => {
-            const score = parseFloat(
-              c.cvss3?.cvss3_base_score || c.cvss?.cvss_base_score || 0
-            );
-            const desc = c.bugzilla?.description
-              || (Array.isArray(c.details) ? c.details.join('. ') : c.details)
-              || 'No description';
+            const score = parseFloat(c.cvss3_score || c.cvss_score || 0);
+            const desc = c.bugzilla_description || 'No description';
             return {
               _source: 'redhat',
               cve: {
@@ -2454,37 +2460,39 @@
       try {
         // Query OSV batch for popular open-source packages across ecosystems
         const popularPackages = [
-          { name: 'express',      ecosystem: 'npm' },
-          { name: 'lodash',       ecosystem: 'npm' },
-          { name: 'axios',        ecosystem: 'npm' },
-          { name: 'minimist',     ecosystem: 'npm' },
-          { name: 'node-fetch',   ecosystem: 'npm' },
-          { name: 'vm2',          ecosystem: 'npm' },
-          { name: 'got',          ecosystem: 'npm' },
-          { name: 'semver',       ecosystem: 'npm' },
-          { name: 'django',       ecosystem: 'PyPI' },
-          { name: 'flask',        ecosystem: 'PyPI' },
-          { name: 'requests',     ecosystem: 'PyPI' },
-          { name: 'pillow',       ecosystem: 'PyPI' },
-          { name: 'cryptography', ecosystem: 'PyPI' },
-          { name: 'pyyaml',       ecosystem: 'PyPI' },
-          { name: 'paramiko',     ecosystem: 'PyPI' },
-          { name: 'jinja2',       ecosystem: 'PyPI' },
-          { name: 'gin',          ecosystem: 'Go' },
-          { name: 'runc',         ecosystem: 'Go' },
-          { name: 'containerd',   ecosystem: 'Go' },
-          { name: 'spring-core',  ecosystem: 'Maven' },
-          { name: 'log4j-core',   ecosystem: 'Maven' },
-          { name: 'struts2-core', ecosystem: 'Maven' },
-          { name: 'rails',        ecosystem: 'RubyGems' },
-          { name: 'nokogiri',     ecosystem: 'RubyGems' },
-          { name: 'openssl',      ecosystem: 'cargo' },
-          { name: 'hyper',        ecosystem: 'cargo' },
+          { name: 'express',                               ecosystem: 'npm' },
+          { name: 'lodash',                                ecosystem: 'npm' },
+          { name: 'axios',                                 ecosystem: 'npm' },
+          { name: 'minimist',                              ecosystem: 'npm' },
+          { name: 'node-fetch',                            ecosystem: 'npm' },
+          { name: 'vm2',                                   ecosystem: 'npm' },
+          { name: 'got',                                   ecosystem: 'npm' },
+          { name: 'semver',                                ecosystem: 'npm' },
+          { name: 'django',                                ecosystem: 'PyPI' },
+          { name: 'flask',                                 ecosystem: 'PyPI' },
+          { name: 'requests',                              ecosystem: 'PyPI' },
+          { name: 'Pillow',                                ecosystem: 'PyPI' },
+          { name: 'cryptography',                          ecosystem: 'PyPI' },
+          { name: 'PyYAML',                                ecosystem: 'PyPI' },
+          { name: 'paramiko',                              ecosystem: 'PyPI' },
+          { name: 'Jinja2',                                ecosystem: 'PyPI' },
+          { name: 'github.com/gin-gonic/gin',              ecosystem: 'Go' },
+          { name: 'github.com/opencontainers/runc',        ecosystem: 'Go' },
+          { name: 'github.com/containerd/containerd',      ecosystem: 'Go' },
+          { name: 'org.springframework:spring-core',       ecosystem: 'Maven' },
+          { name: 'org.apache.logging.log4j:log4j-core',  ecosystem: 'Maven' },
+          { name: 'org.apache.struts:struts2-core',        ecosystem: 'Maven' },
+          { name: 'rails',                                 ecosystem: 'RubyGems' },
+          { name: 'nokogiri',                              ecosystem: 'RubyGems' },
+          { name: 'openssl',                               ecosystem: 'cargo' },
+          { name: 'hyper',                                 ecosystem: 'cargo' },
         ];
-        const resp = await fetch('https://api.osv.dev/v1/querybatch', {
+        const osvBody = JSON.stringify({ queries: popularPackages.map(p => ({ package: p })) });
+        // Route through proxy — api.osv.dev requires POST which CORS blocks from browsers
+        const resp = await fetch(proxyUrl('https://api.osv.dev/v1/querybatch'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ queries: popularPackages.map(p => ({ package: p })) }),
+          body: osvBody,
         });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
@@ -2540,31 +2548,39 @@
 
     // ── Ubuntu Security Notices ────────────────────────────
     async function loadUbuntu() {
-      addLog('SYNC', 'Fetching Ubuntu Security CVEs...');
+      addLog('SYNC', 'Fetching Ubuntu Security Notices...');
       try {
-        const url = 'https://ubuntu.com/security/cves.json?limit=100&offset=0&order=newest&priority=critical,high,medium';
+        // /notices.json is the stable JSON endpoint; /cves.json redirects to HTML on ubuntu.com
+        const url = 'https://ubuntu.com/security/notices.json?limit=100&offset=0&order=newest';
         const resp = await fetch(proxyUrl(url));
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
 
-        const cves = (data.cves || [])
-          .filter(c => c.id && /^CVE-/i.test(c.id))
-          .map(c => {
-            const score = parseFloat(c.cvss_score || c.cvss3_score || 0);
-            const desc = c.ubuntu_description || c.description || c.notes || 'No description';
-            return {
+        const notices = data.notices || data.results || [];
+        const seenCves = new Set();
+        const cves = [];
+        for (const notice of notices) {
+          const cvelist = Array.isArray(notice.cves) ? notice.cves : [];
+          for (const cveRef of cvelist) {
+            const cveId = typeof cveRef === 'string' ? cveRef
+              : (cveRef.id || cveRef.cve_id || '');
+            if (!cveId || !/^CVE-/i.test(cveId) || seenCves.has(cveId)) continue;
+            seenCves.add(cveId);
+            const score = parseFloat(
+              (typeof cveRef === 'object' && (cveRef.cvss3 || cveRef.cvss_score)) || 0
+            );
+            cves.push({
               _source: 'ubuntu',
               cve: {
-                id: c.id,
-                published: c.published || c.date || '',
-                descriptions: [{ lang: 'en', value: desc }],
+                id: cveId,
+                published: notice.published || notice.published_at || '',
+                descriptions: [{ lang: 'en', value: notice.description || notice.title || 'No description' }],
                 metrics: score > 0 ? { cvssMetricV31: [{ cvssData: { baseScore: score } }] } : {},
-                configurations: (c.packages || []).slice(0, 3).map(p => ({
-                  nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:ubuntu:${(p.name || p).toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
-                })),
+                configurations: [],
               },
-            };
-          });
+            });
+          }
+        }
 
         setSourceStatus('ubuntu', true, cves.length);
         addLog('CVE', `Ubuntu Security loaded — ${cves.length} CVEs`);

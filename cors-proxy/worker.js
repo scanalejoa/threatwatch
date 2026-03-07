@@ -14,7 +14,7 @@ const ALLOWED_ORIGINS = [
 ];
 
 const CORS_HEADERS = {
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
@@ -53,6 +53,7 @@ export default {
       'www.cisa.gov',
       'ubuntu.com',
       'api.msrc.microsoft.com',
+      'api.osv.dev',
     ];
     const targetHost = new URL(targetUrl).hostname;
     if (!allowed.some(h => targetHost.endsWith(h))) {
@@ -63,12 +64,17 @@ export default {
     }
 
     try {
-      const resp = await fetch(targetUrl, {
+      const isPost = request.method === 'POST';
+      const fetchInit = {
+        method: isPost ? 'POST' : 'GET',
         headers: {
           'User-Agent': 'THREATWATCH-Proxy/1.0',
           'Accept': 'application/json',
+          ...(isPost ? { 'Content-Type': request.headers.get('Content-Type') || 'application/json' } : {}),
         },
-      });
+        ...(isPost ? { body: await request.arrayBuffer() } : {}),
+      };
+      const resp = await fetch(targetUrl, fetchInit);
 
       const body = await resp.arrayBuffer();
       return new Response(body, {
