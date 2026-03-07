@@ -352,6 +352,43 @@
       border: 1px solid rgba(255, 170, 0, 0.25);
     }
 
+    .src-osv {
+      background: rgba(0, 255, 170, 0.12);
+      color: #00ffaa;
+      border: 1px solid rgba(0, 255, 170, 0.25);
+    }
+
+    .src-ubuntu {
+      background: rgba(233, 84, 32, 0.12);
+      color: #e95420;
+      border: 1px solid rgba(233, 84, 32, 0.25);
+    }
+
+    .src-msrc {
+      background: rgba(0, 120, 215, 0.12);
+      color: #0078d7;
+      border: 1px solid rgba(0, 120, 215, 0.25);
+    }
+
+    .src-redhat {
+      background: rgba(238, 0, 0, 0.12);
+      color: #ee0000;
+      border: 1px solid rgba(238, 0, 0, 0.25);
+    }
+
+    .owasp-tag {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 8px;
+      padding: 2px 5px;
+      border-radius: 2px;
+      background: rgba(57, 255, 20, 0.1);
+      color: var(--low);
+      border: 1px solid rgba(57, 255, 20, 0.25);
+      margin-left: 4px;
+      letter-spacing: 0.5px;
+      vertical-align: middle;
+    }
+
     .kev-tag {
       font-family: 'Share Tech Mono', monospace;
       font-size: 8px;
@@ -1645,6 +1682,10 @@
       <div class="source-pill" id="src-kev"><span class="dot"></span>CISA KEV</div>
       <div class="source-pill" id="src-github"><span class="dot"></span>GITHUB</div>
       <div class="source-pill" id="src-paloalto"><span class="dot"></span>PALO ALTO</div>
+      <div class="source-pill" id="src-osv"><span class="dot"></span>OSV</div>
+      <div class="source-pill" id="src-ubuntu"><span class="dot"></span>UBUNTU</div>
+      <div class="source-pill" id="src-msrc"><span class="dot"></span>MSRC</div>
+      <div class="source-pill" id="src-redhat"><span class="dot"></span>RED HAT</div>
     </div>
 
     <!-- Stats Bar -->
@@ -1699,6 +1740,10 @@
               <button class="ftab" onclick="filterSource('kev', this)">KEV</button>
               <button class="ftab" onclick="filterSource('github', this)">GITHUB</button>
               <button class="ftab" onclick="filterSource('paloalto', this)">PALOALTO</button>
+              <button class="ftab" onclick="filterSource('osv', this)">OSV</button>
+              <button class="ftab" onclick="filterSource('ubuntu', this)">UBUNTU</button>
+              <button class="ftab" onclick="filterSource('msrc', this)">MSRC</button>
+              <button class="ftab" onclick="filterSource('redhat', this)">REDHAT</button>
             </div>
             <button id="panel-export-csv-btn" class="export-btn" onclick="exportPanelCSV()" title="Export current view as CSV" style="display:inline-flex">↓ CSV</button>
             <button id="panel-export-pdf-btn" class="export-btn" onclick="exportPanelPDF()" title="Print / Save as PDF" style="display:inline-flex">↓ PDF</button>
@@ -1815,7 +1860,7 @@
       btn.classList.add('active');
       document.getElementById('custom-dates').classList.remove('visible');
       // If switching away from a keyword-filtered view, reload external sources so full data is restored.
-      if (hadKeyword) { loadKEV(); loadGitHub(); loadPaloAlto(); }
+      if (hadKeyword) { loadKEV(); loadGitHub(); loadPaloAlto(); loadOSV(); loadUbuntu(); loadMSRC(); loadRedHat(); }
       loadNVD();
     }
 
@@ -1910,7 +1955,7 @@
 
       currentRangeDays = -1;
       loadNVD(new Date(startVal), new Date(endVal + 'T23:59:59')).then(() => {
-        loadKEV(); loadGitHub(); loadPaloAlto();
+        loadKEV(); loadGitHub(); loadPaloAlto(); loadOSV(); loadUbuntu(); loadMSRC(); loadRedHat();
       });
     }
 
@@ -2288,23 +2333,44 @@
       }
     }
 
-    // ── Red Hat CVEs (via NVD CPE filter) ──────────────────
+    // ── Red Hat Security Data API ───────────────────────────
     async function loadRedHat() {
-      addLog('SYNC', 'Fetching Red Hat CVEs via NVD...');
+      addLog('SYNC', 'Fetching Red Hat Security advisories...');
       try {
-        const end = new Date().toISOString().split('.')[0] + '.000';
-        const start = new Date(Date.now() - 90 * 86400000).toISOString().split('.')[0] + '.000';
-        const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=redhat&pubStartDate=${start}&pubEndDate=${end}&resultsPerPage=50`;
-        const resp = await fetch(url);
+        const after = new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0];
+        const url = `https://access.redhat.com/labs/securitydataapi/cve.json?after=${after}&per_page=100`;
+        const resp = await fetch(proxyUrl(url));
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
-        const cves = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'redhat' }));
+
+        const cves = (Array.isArray(data) ? data : [])
+          .filter(c => c.CVE && /^CVE-/i.test(c.CVE))
+          .map(c => {
+            const score = parseFloat(
+              c.cvss3?.cvss3_base_score || c.cvss?.cvss_base_score || 0
+            );
+            const desc = c.bugzilla?.description
+              || (Array.isArray(c.details) ? c.details.join('. ') : c.details)
+              || 'No description';
+            return {
+              _source: 'redhat',
+              cve: {
+                id: c.CVE,
+                published: c.public_date || '',
+                descriptions: [{ lang: 'en', value: desc }],
+                metrics: score > 0 ? { cvssMetricV31: [{ cvssData: { baseScore: score } }] } : {},
+                configurations: (c.affected_packages || []).slice(0, 3).map(pkg => ({
+                  nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:redhat:${pkg.toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
+                })),
+              },
+            };
+          });
 
         setSourceStatus('redhat', true, cves.length);
-        addLog('CVE', `Red Hat CVEs loaded — ${cves.length} (via NVD/keyword filter)`);
+        addLog('CVE', `Red Hat Security loaded — ${cves.length} CVEs`);
         mergeExternalCves(cves);
       } catch (e) {
-        addLog('ALERT', `Red Hat CVE error: ${e.message}`);
+        addLog('ALERT', `Red Hat Security error: ${e.message}`);
         setSourceStatus('redhat', false);
       }
     }
@@ -2361,6 +2427,200 @@
       }
     }
 
+    // ── OWASP API Top 10 Classifier (client-side) ──────────
+    // Enriches existing CVEs with OWASP API Security Top 10 categories (2023)
+    // based on description keyword matching — no API calls.
+    function classifyOwaspApi(vuln) {
+      const desc = (vuln.cve.descriptions?.find(d => d.lang === 'en')?.value || '').toLowerCase();
+      if (!desc) return null;
+      // Only classify if the vuln looks API-related
+      if (!/\bapi\b|rest(ful)?|graphql|oauth|jwt|json.web.token|openapi|swagger|endpoint|ssrf/.test(desc)) return null;
+      if (/\bidor\b|object.level.auth|broken.object.level|bola\b/.test(desc))           return 'API1';
+      if (/broken.auth|auth.*bypass|jwt\b|json.web.token|oauth\b|bearer.token|session.fix|credential.stuff/.test(desc)) return 'API2';
+      if (/mass.assign|over.post|excess.*data.expos|property.level.auth/.test(desc))   return 'API3';
+      if (/rate.limit|throttl|resource.*exhaust|unrestricted.*resource|dos\b|denial.of.service/.test(desc)) return 'API4';
+      if (/function.level.auth|privilege.escal|admin.*endpoint|unauthorized.*function/.test(desc)) return 'API5';
+      if (/business.logic|workflow.*bypass|purchase.*manipul|inventory.*manipul/.test(desc)) return 'API6';
+      if (/\bssrf\b|server.side.request.forgery/.test(desc))                            return 'API7';
+      if (/misconfigur|default.cred|cors.*misconfig|security.header|tls.*misconfig/.test(desc)) return 'API8';
+      if (/undocumented.api|deprecated.endpoint|shadow.api|unknown.*endpoint/.test(desc)) return 'API9';
+      if (/third.party.api|upstream.*service|supply.chain.*api|api.*trust/.test(desc)) return 'API10';
+      return null;
+    }
+
+    // ── OSV (Open Source Vulnerabilities) ──────────────────
+    async function loadOSV() {
+      addLog('SYNC', 'Fetching OSV supply chain advisories...');
+      try {
+        // Query OSV batch for popular open-source packages across ecosystems
+        const popularPackages = [
+          { name: 'express',      ecosystem: 'npm' },
+          { name: 'lodash',       ecosystem: 'npm' },
+          { name: 'axios',        ecosystem: 'npm' },
+          { name: 'minimist',     ecosystem: 'npm' },
+          { name: 'node-fetch',   ecosystem: 'npm' },
+          { name: 'vm2',          ecosystem: 'npm' },
+          { name: 'got',          ecosystem: 'npm' },
+          { name: 'semver',       ecosystem: 'npm' },
+          { name: 'django',       ecosystem: 'PyPI' },
+          { name: 'flask',        ecosystem: 'PyPI' },
+          { name: 'requests',     ecosystem: 'PyPI' },
+          { name: 'pillow',       ecosystem: 'PyPI' },
+          { name: 'cryptography', ecosystem: 'PyPI' },
+          { name: 'pyyaml',       ecosystem: 'PyPI' },
+          { name: 'paramiko',     ecosystem: 'PyPI' },
+          { name: 'jinja2',       ecosystem: 'PyPI' },
+          { name: 'gin',          ecosystem: 'Go' },
+          { name: 'runc',         ecosystem: 'Go' },
+          { name: 'containerd',   ecosystem: 'Go' },
+          { name: 'spring-core',  ecosystem: 'Maven' },
+          { name: 'log4j-core',   ecosystem: 'Maven' },
+          { name: 'struts2-core', ecosystem: 'Maven' },
+          { name: 'rails',        ecosystem: 'RubyGems' },
+          { name: 'nokogiri',     ecosystem: 'RubyGems' },
+          { name: 'openssl',      ecosystem: 'cargo' },
+          { name: 'hyper',        ecosystem: 'cargo' },
+        ];
+        const resp = await fetch('https://api.osv.dev/v1/querybatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ queries: popularPackages.map(p => ({ package: p })) }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        const seenIds = new Set();
+        const osvCves = [];
+        (data.results || []).forEach(result => {
+          (result.vulns || []).forEach(vuln => {
+            if (seenIds.has(vuln.id)) return;
+            seenIds.add(vuln.id);
+            // Prefer CVE alias; fall back to OSV ID (GHSA-xxx / PYSEC-xxx etc.)
+            const cveId = (vuln.aliases || []).find(a => /^CVE-/i.test(a)) || vuln.id;
+            if (!cveId) return;
+            const affectedPkg = vuln.affected?.[0]?.package;
+            // Parse base score from severity vector or database_specific
+            let baseScore = 0;
+            if (vuln.severity && Array.isArray(vuln.severity)) {
+              for (const sev of vuln.severity) {
+                const m = (sev.score || '').match(/\/(\d+(?:\.\d+)?)$/);
+                if (m) { baseScore = parseFloat(m[1]); break; }
+              }
+            }
+            if (!baseScore && vuln.database_specific?.cvss_score) {
+              baseScore = parseFloat(vuln.database_specific.cvss_score) || 0;
+            }
+            if (!baseScore && vuln.database_specific?.severity) {
+              const s = vuln.database_specific.severity.toUpperCase();
+              baseScore = s === 'CRITICAL' ? 9.5 : s === 'HIGH' ? 7.5 : s === 'MODERATE' || s === 'MEDIUM' ? 5.5 : s === 'LOW' ? 2.5 : 0;
+            }
+            osvCves.push({
+              _source: 'osv',
+              cve: {
+                id: cveId,
+                published: vuln.published || vuln.modified || '',
+                descriptions: [{ lang: 'en', value: vuln.details || vuln.summary || 'No description' }],
+                metrics: baseScore > 0 ? { cvssMetricV31: [{ cvssData: { baseScore } }] } : {},
+                configurations: affectedPkg ? [{
+                  nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:${(affectedPkg.ecosystem || 'unknown').toLowerCase()}:${(affectedPkg.name || 'unknown').toLowerCase()}:*:*:*` }] }]
+                }] : [],
+              },
+            });
+          });
+        });
+
+        setSourceStatus('osv', true, osvCves.length);
+        addLog('CVE', `OSV supply chain advisories loaded — ${osvCves.length} entries`);
+        mergeExternalCves(osvCves);
+      } catch (e) {
+        addLog('ALERT', `OSV error: ${e.message}`);
+        setSourceStatus('osv', false);
+      }
+    }
+
+    // ── Ubuntu Security Notices ────────────────────────────
+    async function loadUbuntu() {
+      addLog('SYNC', 'Fetching Ubuntu Security CVEs...');
+      try {
+        const url = 'https://ubuntu.com/security/cves.json?limit=100&offset=0&order=newest&priority=critical,high,medium';
+        const resp = await fetch(proxyUrl(url));
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        const cves = (data.cves || [])
+          .filter(c => c.id && /^CVE-/i.test(c.id))
+          .map(c => {
+            const score = parseFloat(c.cvss_score || c.cvss3_score || 0);
+            const desc = c.ubuntu_description || c.description || c.notes || 'No description';
+            return {
+              _source: 'ubuntu',
+              cve: {
+                id: c.id,
+                published: c.published || c.date || '',
+                descriptions: [{ lang: 'en', value: desc }],
+                metrics: score > 0 ? { cvssMetricV31: [{ cvssData: { baseScore: score } }] } : {},
+                configurations: (c.packages || []).slice(0, 3).map(p => ({
+                  nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:ubuntu:${(p.name || p).toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
+                })),
+              },
+            };
+          });
+
+        setSourceStatus('ubuntu', true, cves.length);
+        addLog('CVE', `Ubuntu Security loaded — ${cves.length} CVEs`);
+        mergeExternalCves(cves);
+      } catch (e) {
+        addLog('ALERT', `Ubuntu Security error: ${e.message}`);
+        setSourceStatus('ubuntu', false);
+      }
+    }
+
+    // ── Microsoft MSRC (Security Update Guide) ────────────
+    async function loadMSRC() {
+      addLog('SYNC', 'Fetching Microsoft MSRC advisories...');
+      try {
+        // Step 1: list available CVRF documents
+        const updatesResp = await fetch(proxyUrl('https://api.msrc.microsoft.com/cvrf/v3.0/Updates'));
+        if (!updatesResp.ok) throw new Error(`HTTP ${updatesResp.status}`);
+        const updatesData = await updatesResp.json();
+        const updates = (updatesData.value || []).sort((a, b) =>
+          new Date(b.CurrentReleaseDate || 0) - new Date(a.CurrentReleaseDate || 0)
+        );
+        if (!updates.length) throw new Error('No MSRC updates found');
+
+        // Step 2: fetch the most recent monthly CVRF
+        const latest = updates[0];
+        const cvrfResp = await fetch(proxyUrl(`https://api.msrc.microsoft.com/cvrf/v3.0/cvrf/${latest.ID}`));
+        if (!cvrfResp.ok) throw new Error(`HTTP ${cvrfResp.status}`);
+        const cvrf = await cvrfResp.json();
+
+        const cves = (cvrf.Vulnerability || [])
+          .filter(v => v.CVE && /^CVE-/i.test(v.CVE))
+          .map(v => {
+            const score = parseFloat(v.CVSSScoreSets?.[0]?.BaseScore || 0);
+            const desc = v.Notes?.find(n => n.Type === 1 || n.Type === 'Description')?.Value
+              || v.Title?.Value || 'No description';
+            return {
+              _source: 'msrc',
+              cve: {
+                id: v.CVE,
+                published: v.RevisionHistory?.[v.RevisionHistory.length - 1]?.Date
+                  || latest.CurrentReleaseDate || '',
+                descriptions: [{ lang: 'en', value: desc }],
+                metrics: score > 0 ? { cvssMetricV31: [{ cvssData: { baseScore: score } }] } : {},
+                configurations: [],
+              },
+            };
+          });
+
+        setSourceStatus('msrc', true, cves.length);
+        addLog('CVE', `MSRC loaded — ${cves.length} CVEs (${latest.ID})`);
+        mergeExternalCves(cves);
+      } catch (e) {
+        addLog('ALERT', `MSRC error: ${e.message}`);
+        setSourceStatus('msrc', false);
+      }
+    }
 
     // ── Merge external CVEs into allCves ───────────────────
     function mergeExternalCves(incoming) {
@@ -2494,11 +2754,13 @@
         const published = v.cve.published?.substring(0, 10) || '';
         const src = getSourceLabel(v);
         const kevBadge = v._kevExploited ? '<span class="kev-tag">⚡EXPLOITED</span>' : '';
+        const owaspCat = classifyOwaspApi(v);
+        const owaspBadge = owaspCat ? `<span class="owasp-tag">OWASP ${owaspCat}</span>` : '';
 
         return `
     <div class="cve-item">
       <div>
-        <a class="cve-id" href="${getCveLink(v.cve.id)}" target="_blank" rel="noopener" style="text-decoration:none">${v.cve.id}</a>${kevBadge}
+        <a class="cve-id" href="${getCveLink(v.cve.id)}" target="_blank" rel="noopener" style="text-decoration:none">${v.cve.id}</a>${kevBadge}${owaspBadge}
         <div class="cve-vendor" style="margin-top:4px">${published}</div>
       </div>
       <div>
@@ -2817,6 +3079,10 @@
       loadKEV();
       loadGitHub();
       loadPaloAlto();
+      loadOSV();
+      loadUbuntu();
+      loadMSRC();
+      loadRedHat();
     });
 
     // Auto-refresh every 5 minutes — skip when user has a custom range or keyword search active
@@ -2827,6 +3093,10 @@
         loadKEV();
         loadGitHub();
         loadPaloAlto();
+        loadOSV();
+        loadUbuntu();
+        loadMSRC();
+        loadRedHat();
       });
     }, 5 * 60 * 1000);
     // ── Modal ──────────────────────────────────────────────

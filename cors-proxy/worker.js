@@ -51,6 +51,8 @@ export default {
       'api.github.com',
       'services.nvd.nist.gov',
       'www.cisa.gov',
+      'ubuntu.com',
+      'api.msrc.microsoft.com',
     ];
     const targetHost = new URL(targetUrl).hostname;
     if (!allowed.some(h => targetHost.endsWith(h))) {
