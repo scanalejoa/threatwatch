@@ -2485,8 +2485,8 @@
           { name: 'org.apache.struts:struts2-core',        ecosystem: 'Maven' },
           { name: 'rails',                                 ecosystem: 'RubyGems' },
           { name: 'nokogiri',                              ecosystem: 'RubyGems' },
-          { name: 'openssl',                               ecosystem: 'cargo' },
-          { name: 'hyper',                                 ecosystem: 'cargo' },
+          { name: 'openssl',                               ecosystem: 'crates.io' },
+          { name: 'hyper',                                 ecosystem: 'crates.io' },
         ];
         const osvBody = JSON.stringify({ queries: popularPackages.map(p => ({ package: p })) });
         const osvFetchOpts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: osvBody };
@@ -2556,7 +2556,13 @@
       try {
         // /notices.json is the stable JSON endpoint; /cves.json redirects to HTML on ubuntu.com
         const url = 'https://ubuntu.com/security/notices.json?limit=100&offset=0&order=newest';
-        const resp = await fetch(proxyUrl(url));
+        let resp;
+        try {
+          resp = await fetch(url);
+          if (!resp.ok) throw new Error('direct failed');
+        } catch {
+          resp = await fetch(proxyUrl(url));
+        }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
 
