@@ -2338,7 +2338,8 @@
       addLog('SYNC', 'Fetching Red Hat Security advisories...');
       try {
         const after = new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0];
-        const url = `https://access.redhat.com/labs/securitydataapi/cve.json?after=${after}&per_page=100`;
+        // Correct endpoint: /hydra/rest/securitydata/ (the old /labs/securitydataapi/ path is 404)
+        const url = `https://access.redhat.com/hydra/rest/securitydata/cve.json?after=${after}&per_page=100`;
         // Try direct first — Red Hat Security Data API supports CORS
         let resp;
         try {
@@ -2488,12 +2489,15 @@
           { name: 'hyper',                                 ecosystem: 'cargo' },
         ];
         const osvBody = JSON.stringify({ queries: popularPackages.map(p => ({ package: p })) });
-        // Route through proxy — api.osv.dev requires POST which CORS blocks from browsers
-        const resp = await fetch(proxyUrl('https://api.osv.dev/v1/querybatch'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: osvBody,
-        });
+        const osvFetchOpts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: osvBody };
+        // Try direct CORS first; fall back to proxy if browser blocks the cross-origin POST
+        let resp;
+        try {
+          resp = await fetch('https://api.osv.dev/v1/querybatch', osvFetchOpts);
+          if (!resp.ok) throw new Error('direct failed');
+        } catch {
+          resp = await fetch(proxyUrl('https://api.osv.dev/v1/querybatch'), osvFetchOpts);
+        }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
 
@@ -2560,23 +2564,24 @@
         const seenCves = new Set();
         const cves = [];
         for (const notice of notices) {
-          const cvelist = Array.isArray(notice.cves) ? notice.cves : [];
-          for (const cveRef of cvelist) {
-            const cveId = typeof cveRef === 'string' ? cveRef
-              : (cveRef.id || cveRef.cve_id || '');
-            if (!cveId || !/^CVE-/i.test(cveId) || seenCves.has(cveId)) continue;
+          // Ubuntu notices have no dedicated cves[] field — CVE IDs appear in description text
+          const text = (notice.description || '') + ' ' + (notice.summary || '');
+          const cveMatches = text.match(/CVE-\d{4}-\d+/g) || [];
+          for (const cveId of cveMatches) {
+            if (seenCves.has(cveId)) continue;
             seenCves.add(cveId);
-            const score = parseFloat(
-              (typeof cveRef === 'object' && (cveRef.cvss3 || cveRef.cvss_score)) || 0
-            );
             cves.push({
               _source: 'ubuntu',
               cve: {
                 id: cveId,
-                published: notice.published || notice.published_at || '',
-                descriptions: [{ lang: 'en', value: notice.description || notice.title || 'No description' }],
-                metrics: score > 0 ? { cvssMetricV31: [{ cvssData: { baseScore: score } }] } : {},
-                configurations: [],
+                published: notice.published || '',
+                descriptions: [{ lang: 'en', value: notice.title || notice.summary || 'No description' }],
+                metrics: {},
+                configurations: Object.keys(notice.release_packages || {}).slice(0, 1).flatMap(rel =>
+                  (notice.release_packages[rel] || []).filter(p => p.is_source).slice(0, 2).map(p => ({
+                    nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:ubuntu:${p.name.replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
+                  }))
+                ),
               },
             });
           }
