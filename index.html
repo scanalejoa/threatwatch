@@ -2555,7 +2555,7 @@
       addLog('SYNC', 'Fetching Ubuntu Security Notices...');
       try {
         // /notices.json is the stable JSON endpoint; /cves.json redirects to HTML on ubuntu.com
-        const url = 'https://ubuntu.com/security/notices.json?limit=100&offset=0&order=newest';
+        const url = 'https://ubuntu.com/security/notices.json?limit=100&offset=0';
         let resp;
         try {
           resp = await fetch(url);
