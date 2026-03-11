@@ -2554,19 +2554,25 @@
     async function loadUbuntu() {
       addLog('SYNC', 'Fetching Ubuntu Security Notices...');
       try {
-        // /notices.json is the stable JSON endpoint; /cves.json redirects to HTML on ubuntu.com
-        const url = 'https://ubuntu.com/security/notices.json?limit=100&offset=0';
-        let resp;
-        try {
-          resp = await fetch(url);
-          if (!resp.ok) throw new Error('direct failed');
-        } catch {
-          resp = await fetch(proxyUrl(url));
+        // Ubuntu API max limit is 20 — fetch 4 pages (80 notices total)
+        const allNotices = [];
+        for (let page = 0; page < 4; page++) {
+          const url = `https://ubuntu.com/security/notices.json?limit=20&offset=${page * 20}`;
+          let resp;
+          try {
+            resp = await fetch(url);
+            if (!resp.ok) throw new Error('direct failed');
+          } catch {
+            resp = await fetch(proxyUrl(url));
+          }
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          const page_notices = data.notices || data.results || [];
+          allNotices.push(...page_notices);
+          if (page_notices.length < 20) break; // last page
         }
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
 
-        const notices = data.notices || data.results || [];
+        const notices = allNotices;
         const seenCves = new Set();
         const cves = [];
         for (const notice of notices) {
