@@ -236,7 +236,7 @@
     /* Grid layout */
     .dashboard-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 3fr 2fr;
       grid-template-rows: auto auto;
       gap: 20px;
     }
@@ -546,8 +546,30 @@
     }
 
     .attack-trend {
-      font-size: 11px;
+      font-size: 10px;
       color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .trend-pct {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 17px;
+      font-weight: 700;
+      display: block;
+      line-height: 1.2;
+    }
+
+    .trend-label {
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .trend-up .trend-pct {
+      color: var(--critical);
+    }
+
+    .trend-dn .trend-pct {
+      color: var(--low);
     }
 
     .trend-up {
@@ -1721,7 +1743,7 @@
     <div class="dashboard-grid">
 
       <!-- Unified Vulnerability Feed -->
-      <div class="panel" style="grid-column: 1 / -1">
+      <div class="panel">
         <div class="panel-header">
           <div style="display:flex;align-items:center;gap:12px">
             <div class="panel-title">⚡ All Vulnerabilities</div>
@@ -1766,6 +1788,17 @@
         </div>
       </div>
 
+      <!-- Attack Categories -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">💀 Attack Categories</div>
+          <span class="panel-badge">MITRE ATT&CK</span>
+        </div>
+        <div class="attack-grid" id="attack-grid">
+          <!-- filled by JS -->
+        </div>
+      </div>
+
       <!-- Vendor Bar Chart -->
       <div class="panel">
         <div class="panel-header">
@@ -1775,17 +1808,6 @@
           <div class="loading-row">
             <div class="skeleton skel-line skel-long"></div>
           </div>
-        </div>
-      </div>
-
-      <!-- Attack Types -->
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">💀 Attack Categories</div>
-          <span class="panel-badge">MITRE ATT&CK</span>
-        </div>
-        <div class="attack-grid" id="attack-grid">
-          <!-- filled by JS -->
         </div>
       </div>
 
@@ -3020,7 +3042,10 @@
       <div class="attack-icon">${a.icon}</div>
       <div class="attack-name">${a.name}</div>
       <div class="attack-count">${a.count.toLocaleString()}</div>
-      <div class="attack-trend ${a.up ? 'trend-up' : 'trend-dn'}">${a.trend} vs last month</div>
+      <div class="attack-trend ${a.up ? 'trend-up' : 'trend-dn'}">
+        <span class="trend-pct">${a.trend}</span>
+        <span class="trend-label">vs last month</span>
+      </div>
     </div>
   `).join('');
     }
