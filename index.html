@@ -1522,6 +1522,7 @@
             return id.includes(kw) || desc.includes(kw) || vendor.includes(kw);
           });
           renderCves(); renderStats(); renderVendorChart(); renderDonut();
+ renderAttackGrid();
         }
 
         // CVE ID direct lookup — bypasses chunking, date range, and keyword search entirely.
@@ -1553,6 +1554,7 @@
             setSourceStatus('nvd', false);
           }
           renderCves(); renderStats(); renderVendorChart(); renderDonut();
+ renderAttackGrid();
           _setNvdProgress(100, found.length > 0);
           return;
         }
@@ -1638,6 +1640,7 @@
             renderStats();
             renderVendorChart();
             renderDonut();
+            renderAttackGrid();
 
             startIndex += NVD_PER_PAGE;
             if (startIndex >= (totalResults || 0) || page >= NVD_MAX_PAGES) break;
@@ -1667,6 +1670,7 @@
         renderStats();
         renderVendorChart();
         renderDonut();
+        renderAttackGrid();
         setSourceStatus('nvd', true, loaded);
       } catch (e) {
         _setNvdProgress(null);
@@ -1680,6 +1684,7 @@
           document.getElementById('sync-status').style.color = 'var(--warn)';
           document.getElementById('range-info').textContent = 'NVD offline — external results only';
           renderCves(); renderStats(); renderVendorChart(); renderDonut();
+ renderAttackGrid();
         } else {
           addLog('ALERT', `NVD API error: ${e.message} — Loading demo data`);
           document.getElementById('sync-status').textContent = 'DEMO MODE';
@@ -2178,6 +2183,7 @@
         renderStats();
         renderVendorChart();
         renderDonut();
+        renderAttackGrid();
         addLog('SYNC', `Merged ${newOnes.length} new CVEs from external source`);
       }
     }
@@ -2505,34 +2511,40 @@
 
     // (KEV feed removed — unified into All Vulnerabilities panel)
 
-    // ── Attack Categories (static MITRE data) ─────────────
-    const attackCategories = [
-      { icon: '🔐', name: 'RANSOMWARE', count: 847, trend: '+12%', up: true },
-      { icon: '🎣', name: 'PHISHING', count: 2341, trend: '+8%', up: true },
-      { icon: '💉', name: 'SQL INJECTION', count: 1203, trend: '-3%', up: false },
-      { icon: '⚡', name: 'DDoS', count: 634, trend: '+22%', up: true },
-      { icon: '🔗', name: 'SUPPLY CHAIN', count: 189, trend: '+45%', up: true },
-      { icon: '🤖', name: 'AI THREATS', count: 92, trend: '+130%', up: true },
-      { icon: '🧬', name: 'ZERO-DAY', count: 156, trend: '+18%', up: true },
-      { icon: '⛓️', name: 'BLOCKCHAIN', count: 43, trend: '+67%', up: true },
+    // -- Attack Categories -- computed from live allCves[] --
+    const ATTACK_DEFS = [
+      { icon: '💉', name: 'SQL INJECTION',     keys: /sql.?inject|\bsqli\b/i },
+      { icon: '⚡',     name: 'REMOTE CODE EXEC',  keys: /remote.code.exec|arbitrary.code|\brce\b|code.execution/i },
+      { icon: '🎯', name: 'XSS',               keys: /cross.site.script|\bxss\b/i },
+      { icon: '💣', name: 'BUFFER OVERFLOW',   keys: /buffer.overflow|stack.overflow|heap.overflow|out.of.bounds.write/i },
+      { icon: '📁', name: 'PATH TRAVERSAL',    keys: /path.travers|directory.travers|\blfi\b|local.file.incl/i },
+      { icon: '🔓', name: 'AUTH BYPASS',       keys: /auth(?:entication)?.bypass|bypass.auth|credential.bypass/i },
+      { icon: '🔺', name: 'PRIV ESCALATION',   keys: /privilege.escal|elevation.of.priv|local.privilege/i },
+      { icon: '🚫', name: 'DENIAL OF SERVICE', keys: /denial.of.service|\bddos\b|resource.exhaustion/i },
     ];
 
     function renderAttackGrid() {
-      const sorted = [...attackCategories].sort((a, b) => {
-        const pct = s => parseFloat(s.replace('%',''));
-        return pct(b.trend) - pct(a.trend);
-      });
-      document.getElementById('attack-grid').innerHTML = sorted.map(a => `
-    <div class="attack-tile">
-      <div class="attack-icon">${a.icon}</div>
-      <div class="attack-name">${a.name}</div>
-      <div class="attack-count">${a.count.toLocaleString()}</div>
-      <div class="attack-trend ${a.up ? 'trend-up' : 'trend-dn'}">
-        <span class="trend-pct">${a.trend}</span>
-        <span class="trend-label">vs last month</span>
-      </div>
-    </div>
-  `).join('');
+      const total = allCves.length || 1;
+      const counts = ATTACK_DEFS.map(def => {
+        const count = allCves.filter(v => {
+          const desc = v.cve?.descriptions?.find(d => d.lang === 'en')?.value || '';
+          return def.keys.test(desc);
+        }).length;
+        return { icon: def.icon, name: def.name, count };
+      }).sort((a, b) => b.count - a.count);
+
+      const html = counts.map(a => {
+        const pct = ((a.count / total) * 100).toFixed(1);
+        return '<div class="attack-tile">'
+          + '<div class="attack-icon">' + a.icon + '</div>'
+          + '<div class="attack-name">' + a.name + '</div>'
+          + '<div class="attack-count">' + a.count.toLocaleString() + '</div>'
+          + '<div class="attack-trend">'
+          + '<span class="trend-pct" style="color:var(--amber);font-size:13px">' + pct + '%</span>'
+          + '<span class="trend-label">of loaded CVEs</span>'
+          + '</div></div>';
+      }).join('');
+      document.getElementById('attack-grid').innerHTML = html;
     }
 
     // ── Demo Data (fallback) ──────────────────────────────
@@ -2542,6 +2554,7 @@
       renderStats();
       renderVendorChart();
       renderDonut();
+      renderAttackGrid();
       addLog('SYNC', 'Demo data loaded — connect to live APIs for real data');
     }
 
