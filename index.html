@@ -1191,6 +1191,22 @@
       margin-bottom: 5px;
     }
 
+    .emerging-count {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--amber);
+      background: rgba(196,140,56,0.1);
+      border: 1px solid rgba(196,140,56,0.25);
+      padding: 1px 5px;
+      margin-left: auto;
+      white-space: nowrap;
+    }
+    .emerging-count.zero {
+      color: var(--muted);
+      background: transparent;
+      border-color: var(--border);
+    }
+
     .emerging-source {
       font-family: 'JetBrains Mono', monospace;
       font-size: 9px;
@@ -1389,80 +1405,7 @@
           <div class="panel-title">⚠ Emerging Threats</div>
           <span class="panel-badge" style="color:var(--muted);border-color:var(--border)">CURATED REFERENCE DATA</span>
         </div>
-        <div class="emerging-grid">
-
-          <div class="emerging-tile tl-critical">
-            <div class="emerging-icon">🔐</div>
-            <div class="emerging-body">
-              <div class="emerging-header">
-                <div class="emerging-name">Ransomware</div>
-                <span class="threat-level">CRITICAL</span>
-              </div>
-              <div class="emerging-desc">Active campaigns targeting critical infrastructure, healthcare &amp; finance sectors</div>
-              <div class="emerging-source">SRC: CISA Advisories 2024</div>
-            </div>
-          </div>
-
-          <div class="emerging-tile tl-high">
-            <div class="emerging-icon">🤖</div>
-            <div class="emerging-body">
-              <div class="emerging-header">
-                <div class="emerging-name">AI-Powered Attacks</div>
-                <span class="threat-level">HIGH</span>
-              </div>
-              <div class="emerging-desc">LLM-assisted phishing, deepfake impersonation &amp; automated vulnerability recon</div>
-              <div class="emerging-source">SRC: CrowdStrike Global Threat Report 2024</div>
-            </div>
-          </div>
-
-          <div class="emerging-tile tl-high">
-            <div class="emerging-icon">🎣</div>
-            <div class="emerging-body">
-              <div class="emerging-header">
-                <div class="emerging-name">Phishing / BEC</div>
-                <span class="threat-level">HIGH</span>
-              </div>
-              <div class="emerging-desc">Business email compromise, spear phishing &amp; voice phishing (vishing) campaigns</div>
-              <div class="emerging-source">SRC: Verizon DBIR 2024 — 36% of breaches</div>
-            </div>
-          </div>
-
-          <div class="emerging-tile tl-high">
-            <div class="emerging-icon">🔗</div>
-            <div class="emerging-body">
-              <div class="emerging-header">
-                <div class="emerging-name">Supply Chain</div>
-                <span class="threat-level">HIGH</span>
-              </div>
-              <div class="emerging-desc">Dependency confusion, typosquatting &amp; malicious package injection in open source</div>
-              <div class="emerging-source">SRC: OpenSSF / GitHub Advisory DB</div>
-            </div>
-          </div>
-
-          <div class="emerging-tile tl-medium">
-            <div class="emerging-icon">⛓️</div>
-            <div class="emerging-body">
-              <div class="emerging-header">
-                <div class="emerging-name">Blockchain / Web3</div>
-                <span class="threat-level">MEDIUM</span>
-              </div>
-              <div class="emerging-desc">Smart contract exploits, cross-chain bridge attacks &amp; flash loan manipulation</div>
-              <div class="emerging-source">SRC: Chainalysis Crypto Crime Report 2024</div>
-            </div>
-          </div>
-
-          <div class="emerging-tile tl-medium">
-            <div class="emerging-icon">👤</div>
-            <div class="emerging-body">
-              <div class="emerging-header">
-                <div class="emerging-name">Insider Threats</div>
-                <span class="threat-level">MEDIUM</span>
-              </div>
-              <div class="emerging-desc">Credential abuse, data exfiltration &amp; privilege misuse by malicious or negligent insiders</div>
-              <div class="emerging-source">SRC: CISA Insider Threat Mitigation Guide</div>
-            </div>
-          </div>
-
+        <div class="emerging-grid" id="emerging-grid">
         </div>
       </div>
 
@@ -1686,6 +1629,7 @@
           });
           renderCves(); renderStats(); renderVendorChart(); renderDonut();
  renderAttackGrid();
+ renderEmergingThreats();
         }
 
         // CVE ID direct lookup — bypasses chunking, date range, and keyword search entirely.
@@ -1718,6 +1662,7 @@
           }
           renderCves(); renderStats(); renderVendorChart(); renderDonut();
  renderAttackGrid();
+ renderEmergingThreats();
           _setNvdProgress(100, found.length > 0);
           return;
         }
@@ -1804,6 +1749,7 @@
             renderVendorChart();
             renderDonut();
             renderAttackGrid();
+            renderEmergingThreats();
 
             startIndex += NVD_PER_PAGE;
             if (startIndex >= (totalResults || 0) || page >= NVD_MAX_PAGES) break;
@@ -1834,6 +1780,7 @@
         renderVendorChart();
         renderDonut();
         renderAttackGrid();
+        renderEmergingThreats();
         setSourceStatus('nvd', true, loaded);
       } catch (e) {
         _setNvdProgress(null);
@@ -1848,6 +1795,7 @@
           document.getElementById('range-info').textContent = 'NVD offline — external results only';
           renderCves(); renderStats(); renderVendorChart(); renderDonut();
  renderAttackGrid();
+ renderEmergingThreats();
         } else {
           addLog('ALERT', `NVD API error: ${e.message} — Loading demo data`);
           document.getElementById('sync-status').textContent = 'DEMO MODE';
@@ -2347,6 +2295,7 @@
         renderVendorChart();
         renderDonut();
         renderAttackGrid();
+        renderEmergingThreats();
         addLog('SYNC', `Merged ${newOnes.length} new CVEs from external source`);
       }
     }
@@ -2710,6 +2659,71 @@
       document.getElementById('attack-grid').innerHTML = html;
     }
 
+    // ── EMERGING THREATS RENDER ────────────────────────
+    const EMERGING_DEFS = [
+      {
+        icon: '🔐', name: 'Ransomware', level: 'CRITICAL', cls: 'tl-critical',
+        keys: /ransomware|ransom(?:ware)?/i,
+        desc: 'Active campaigns targeting critical infrastructure, healthcare &amp; finance sectors',
+        src: 'SRC: CISA Advisories 2024'
+      },
+      {
+        icon: '🤖', name: 'AI-Powered Attacks', level: 'HIGH', cls: 'tl-high',
+        keys: /llm|large.language.model|deepfake|ai.assisted|ai.powered/i,
+        desc: 'LLM-assisted phishing, deepfake impersonation &amp; automated vulnerability recon',
+        src: 'SRC: CrowdStrike Global Threat Report 2024'
+      },
+      {
+        icon: '🎣', name: 'Phishing / BEC', level: 'HIGH', cls: 'tl-high',
+        keys: /phish|spear.phish|vish(?:ing)?|business.email.compromise|bec/i,
+        desc: 'Business email compromise, spear phishing &amp; voice phishing (vishing) campaigns',
+        src: 'SRC: Verizon DBIR 2024 — 36% of breaches'
+      },
+      {
+        icon: '🔗', name: 'Supply Chain', level: 'HIGH', cls: 'tl-high',
+        keys: /supply.chain|dependency.confusion|typosquat|malicious.package/i,
+        desc: 'Dependency confusion, typosquatting &amp; malicious package injection in open source',
+        src: 'SRC: OpenSSF / GitHub Advisory DB'
+      },
+      {
+        icon: '⛓️', name: 'Blockchain / Web3', level: 'MEDIUM', cls: 'tl-medium',
+        keys: /blockchain|smart.contract|web3|defi|cross.chain|flash.loan|cryptocurrency/i,
+        desc: 'Smart contract exploits, cross-chain bridge attacks &amp; flash loan manipulation',
+        src: 'SRC: Chainalysis Crypto Crime Report 2024'
+      },
+      {
+        icon: '👤', name: 'Insider Threats', level: 'MEDIUM', cls: 'tl-medium',
+        keys: /insider.threat|privilege.abus|credential.abus|data.exfiltrat|unauthorized.access/i,
+        desc: 'Credential abuse, data exfiltration &amp; privilege misuse by malicious or negligent insiders',
+        src: 'SRC: CISA Insider Threat Mitigation Guide'
+      }
+    ];
+
+    function renderEmergingThreats() {
+      const total = allCves.length;
+      const html = EMERGING_DEFS.map(def => {
+        const count = total ? allCves.filter(v => {
+          const desc = v.cve?.descriptions?.find(d => d.lang === 'en')?.value || '';
+          return def.keys.test(desc);
+        }).length : 0;
+        const pct = total ? ((count / total) * 100).toFixed(1) : '0.0';
+        const cntClass = count === 0 ? 'emerging-count zero' : 'emerging-count';
+        const cntLabel = total ? count.toLocaleString() + ' CVEs · ' + pct + '%' : 'NO DATA';
+        return '<div class="emerging-tile ' + def.cls + '">'
+          + '<div class="emerging-icon">' + def.icon + '</div>'
+          + '<div class="emerging-body">'
+          + '<div class="emerging-header">'
+          + '<div class="emerging-name">' + def.name + '</div>'
+          + '<span class="threat-level">' + def.level + '</span>'
+          + '<span class="' + cntClass + '">' + cntLabel + '</span>'
+          + '</div>'
+          + '<div class="emerging-desc">' + def.desc + '</div>'
+          + '<div class="emerging-source">' + def.src + '</div>'
+          + '</div></div>';
+      }).join('');
+      document.getElementById('emerging-grid').innerHTML = html;
+    }
+
     // ── Demo Data (fallback) ──────────────────────────────
     function loadDemoData() {
       allCves = generateDemoCves(80);
@@ -2718,6 +2732,7 @@
       renderVendorChart();
       renderDonut();
       renderAttackGrid();
+      renderEmergingThreats();
       addLog('SYNC', 'Demo data loaded — connect to live APIs for real data');
     }
 
@@ -2790,6 +2805,7 @@
 
     // ── INIT ──────────────────────────────────────────────
     renderAttackGrid();
+    renderEmergingThreats();
     simulateActivity();
     addLog('SYNC', 'THREATWATCH initialized — loading security feeds...');
 
