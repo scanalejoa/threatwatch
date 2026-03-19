@@ -863,6 +863,26 @@
       transition: all 0.15s;
     }
     #profile-banner .pb-edit:hover { background: rgba(196,140,56,0.15); border-color: var(--amber); }
+    .profile-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 8px;
+      border: 1px solid var(--border2);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; color: var(--text);
+    }
+    .profile-row.active-row { border-left: 2px solid var(--amber); background: rgba(196,140,56,0.07); color: var(--amber); }
+    .profile-row.editing-row { border-left: 2px solid var(--border2); background: rgba(255,255,255,0.03); }
+    .profile-row .pr-name { flex: 1; letter-spacing: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .profile-row .pr-count { color: var(--muted); font-size: 9px; white-space: nowrap; }
+    .profile-row .pr-btn {
+      font-family: 'JetBrains Mono', monospace; font-size: 8px;
+      padding: 2px 7px; background: transparent;
+      border: 1px solid var(--border2); color: var(--muted);
+      cursor: pointer; letter-spacing: 1px; white-space: nowrap;
+      transition: all 0.12s;
+    }
+    .profile-row .pr-btn:hover { border-color: var(--amber); color: var(--amber); }
+    .profile-row .pr-btn.del:hover { border-color: var(--critical); color: var(--critical); }
 
     .toggle-switch { position:relative; display:inline-block; width:36px; height:20px; }
     .toggle-switch input { opacity:0; width:0; height:0; }
@@ -1626,6 +1646,8 @@
     let companyName = '';
     let companyTechStack = [];    // array of lowercase keyword strings
     let companyModeActive = false;
+    let companyProfiles = [];     // [{id, name, techStack}] — all saved profiles
+    let activeProfileId = null;   // id of the currently loaded profile
 
     // ── Live Clock ──────────────────────────────────────
     function updateClock() {
@@ -3527,38 +3549,75 @@
       'atlassian', 'citrix', 'sap', 'ibm', 'juniper', 'f5', 'gitlab', 'confluence'
     ];
 
-    // In-modal working copy of tech stack (before save)
+    // In-modal working copies (before save)
     let _modalTechStack = [];
+    let _editingProfileId = null;  // null = new profile, string id = editing existing
 
     function loadCompanyProfile() {
       try {
-        const saved = localStorage.getItem('tw_company_profile');
-        if (saved) {
-          const p = JSON.parse(saved);
-          companyName = p.companyName || '';
-          companyTechStack = Array.isArray(p.companyTechStack) ? p.companyTechStack : [];
-          companyModeActive = !!p.companyModeActive;
+        // Migration: convert old single-profile format to new multi-profile format
+        const oldSaved = localStorage.getItem('tw_company_profile');
+        if (oldSaved && !localStorage.getItem('tw_company_profiles')) {
+          const old = JSON.parse(oldSaved);
+          const migrated = [{ id: '1', name: old.companyName || 'Default', techStack: Array.isArray(old.companyTechStack) ? old.companyTechStack : [] }];
+          localStorage.setItem('tw_company_profiles', JSON.stringify(migrated));
+          localStorage.setItem('tw_active_profile_id', '1');
+          localStorage.setItem('tw_company_mode_active', JSON.stringify(!!old.companyModeActive));
+          localStorage.removeItem('tw_company_profile');
+        }
+
+        const savedProfiles = localStorage.getItem('tw_company_profiles');
+        if (savedProfiles) companyProfiles = JSON.parse(savedProfiles);
+        activeProfileId = localStorage.getItem('tw_active_profile_id') || null;
+        companyModeActive = JSON.parse(localStorage.getItem('tw_company_mode_active') || 'false');
+
+        const active = companyProfiles.find(p => p.id === activeProfileId);
+        if (active) {
+          companyName = active.name || '';
+          companyTechStack = Array.isArray(active.techStack) ? active.techStack : [];
         }
       } catch (e) { /* ignore parse errors */ }
       updateCompanyModeUI();
     }
 
     function saveCompanyProfile() {
-      companyName = (document.getElementById('company-name-input').value || '').trim();
-      companyTechStack = [..._modalTechStack];
+      const name = (document.getElementById('company-name-input').value || '').trim();
+      const techStack = [..._modalTechStack];
       companyModeActive = document.getElementById('company-mode-toggle').checked;
-      localStorage.setItem('tw_company_profile', JSON.stringify({ companyName, companyTechStack, companyModeActive }));
+
+      const existingIdx = _editingProfileId ? companyProfiles.findIndex(p => p.id === _editingProfileId) : -1;
+      if (existingIdx >= 0) {
+        companyProfiles[existingIdx] = { id: _editingProfileId, name, techStack };
+        activeProfileId = _editingProfileId;
+      } else {
+        const newId = Date.now().toString();
+        companyProfiles.push({ id: newId, name, techStack });
+        activeProfileId = newId;
+        _editingProfileId = newId;
+      }
+
+      companyName = name;
+      companyTechStack = techStack;
+
+      localStorage.setItem('tw_company_profiles', JSON.stringify(companyProfiles));
+      localStorage.setItem('tw_active_profile_id', activeProfileId);
+      localStorage.setItem('tw_company_mode_active', JSON.stringify(companyModeActive));
+
       closeCompanyModal();
       updateCompanyModeUI();
       renderCves();
       renderStats();
-      addLog('SYNC', `Company profile saved: "${companyName || 'unnamed'}" — ${companyTechStack.length} tech(s), mode ${companyModeActive ? 'ON' : 'OFF'}`);
+      addLog('SYNC', `Profile saved: "${name || 'unnamed'}" — ${techStack.length} tech(s), mode ${companyModeActive ? 'ON' : 'OFF'}`);
     }
 
     function openCompanyModal() {
-      _modalTechStack = [...companyTechStack];
-      document.getElementById('company-name-input').value = companyName;
+      // Default: edit the currently active profile
+      _editingProfileId = activeProfileId;
+      const active = companyProfiles.find(p => p.id === activeProfileId);
+      _modalTechStack = active ? [...(active.techStack || [])] : [...companyTechStack];
+      document.getElementById('company-name-input').value = active ? active.name : companyName;
       document.getElementById('company-mode-toggle').checked = companyModeActive;
+      renderProfileList();
       renderTechTags();
       // Render vendor suggestions
       const suggestEl = document.getElementById('company-suggestions');
@@ -3606,6 +3665,78 @@
     function removeTechTag(index) {
       _modalTechStack.splice(index, 1);
       renderTechTags();
+    }
+
+    function renderProfileList() {
+      const el = document.getElementById('profile-list');
+      if (!el) return;
+      if (companyProfiles.length === 0) {
+        el.innerHTML = '<span style="font-family:\'JetBrains Mono\',monospace;font-size:9px;color:var(--muted);padding:4px 0">No saved profiles yet — fill in the form below and click SAVE.</span>';
+        return;
+      }
+      el.innerHTML = companyProfiles.map(p => {
+        const isActive = p.id === activeProfileId;
+        const isEditing = p.id === _editingProfileId;
+        return `<div class="profile-row${isActive ? ' active-row' : ''}${isEditing && !isActive ? ' editing-row' : ''}">
+          ${isActive ? '<span style="color:var(--amber);font-size:9px">●</span>' : '<span style="font-size:9px;opacity:0"> </span>'}
+          <span class="pr-name">${p.name || '(unnamed)'}</span>
+          <span class="pr-count">${p.techStack ? p.techStack.length : 0} tech${(p.techStack||[]).length !== 1 ? 's' : ''}</span>
+          <button class="pr-btn" onclick="loadProfile('${p.id}')">LOAD</button>
+          <button class="pr-btn del" onclick="deleteProfile('${p.id}')">✕</button>
+        </div>`;
+      }).join('');
+    }
+
+    function loadProfile(id) {
+      const profile = companyProfiles.find(p => p.id === id);
+      if (!profile) return;
+      _editingProfileId = id;
+      _modalTechStack = [...(profile.techStack || [])];
+      document.getElementById('company-name-input').value = profile.name || '';
+      renderTechTags();
+      renderProfileList();
+    }
+
+    function deleteProfile(id) {
+      const idx = companyProfiles.findIndex(p => p.id === id);
+      if (idx < 0) return;
+      companyProfiles.splice(idx, 1);
+      const wasActive = id === activeProfileId;
+      if (wasActive) {
+        activeProfileId = null;
+        companyName = '';
+        companyTechStack = [];
+        companyModeActive = false;
+        _editingProfileId = null;
+        _modalTechStack = [];
+        document.getElementById('company-name-input').value = '';
+      }
+      if (_editingProfileId === id) {
+        _editingProfileId = null;
+        _modalTechStack = [];
+        document.getElementById('company-name-input').value = '';
+        renderTechTags();
+      }
+      localStorage.setItem('tw_company_profiles', JSON.stringify(companyProfiles));
+      if (wasActive) {
+        localStorage.removeItem('tw_active_profile_id');
+        localStorage.setItem('tw_company_mode_active', 'false');
+        renderProfileList();
+        updateCompanyModeUI();
+        renderCves();
+        renderStats();
+      } else {
+        renderProfileList();
+      }
+    }
+
+    function newProfile() {
+      _editingProfileId = null;
+      _modalTechStack = [];
+      document.getElementById('company-name-input').value = '';
+      renderTechTags();
+      renderProfileList();
+      document.getElementById('company-name-input').focus();
     }
 
     function matchesCompanyStack(vuln) {
@@ -3679,6 +3810,14 @@
         <button class="modal-close" onclick="closeCompanyModal()">✕</button>
       </div>
       <div class="modal-body" style="padding:20px;display:flex;flex-direction:column;gap:16px;overflow-y:auto">
+        <div id="profile-list-section">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <label class="profile-label" style="margin-bottom:0">SAVED PROFILES</label>
+            <button class="date-go" onclick="newProfile()" style="font-size:9px;padding:3px 10px;letter-spacing:1px">+ NEW</button>
+          </div>
+          <div id="profile-list" style="display:flex;flex-direction:column;gap:4px;max-height:130px;overflow-y:auto;margin-bottom:2px"></div>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:0">
         <div>
           <label class="profile-label">COMPANY NAME</label>
           <input type="text" id="company-name-input" class="profile-input" placeholder="e.g. Acme Corp">
