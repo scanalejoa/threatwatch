@@ -704,6 +704,123 @@
 
     .export-btn:hover { background: var(--amber); color: var(--bg); }
 
+    /* ── COMPANY PROFILE ──────────────────────────── */
+    .profile-btn {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      padding: 5px 10px;
+      background: rgba(196,140,56,0.1);
+      color: var(--amber);
+      border: 1px solid rgba(196,140,56,0.3);
+      border-radius: 0;
+      cursor: pointer;
+      letter-spacing: 1px;
+      transition: all 0.15s;
+    }
+    .profile-btn:hover { background: rgba(196,140,56,0.22); border-color: var(--amber); }
+
+    .profile-label {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      color: var(--muted);
+      text-transform: uppercase;
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .profile-input {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      padding: 6px 10px;
+      background: var(--bg);
+      border: 1px solid var(--border2);
+      border-radius: 0;
+      color: var(--text);
+      outline: none;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .profile-input:focus { border-color: var(--amber); }
+
+    .tech-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      padding: 3px 8px;
+      background: rgba(196,140,56,0.12);
+      border: 1px solid rgba(196,140,56,0.35);
+      color: var(--amber);
+      border-radius: 0;
+      letter-spacing: 1px;
+      cursor: default;
+    }
+    .tech-tag .remove-tag {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1;
+      padding: 0 2px;
+      background: none;
+      border: none;
+    }
+    .tech-tag .remove-tag:hover { color: var(--critical); }
+
+    .suggest-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      padding: 2px 7px;
+      background: transparent;
+      border: 1px solid var(--border2);
+      color: var(--muted);
+      border-radius: 0;
+      cursor: pointer;
+      letter-spacing: 1px;
+      transition: all 0.12s;
+    }
+    .suggest-tag:hover { border-color: var(--amber); color: var(--amber); background: rgba(196,140,56,0.08); }
+
+    header.company-mode-active { border-bottom: 1px solid rgba(196,140,56,0.45); }
+    #company-mode-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      color: var(--amber);
+      letter-spacing: 2px;
+      animation: pulse-amber 2s ease-in-out infinite;
+    }
+    @keyframes pulse-amber { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+    #company-name-display {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 13px;
+      letter-spacing: 2px;
+      color: var(--amber);
+      font-weight: 600;
+      border-left: 1px solid var(--border2);
+      padding-left: 10px;
+      margin-left: 4px;
+    }
+
+    .toggle-switch { position:relative; display:inline-block; width:36px; height:20px; }
+    .toggle-switch input { opacity:0; width:0; height:0; }
+    .toggle-slider {
+      position:absolute; cursor:pointer;
+      top:0; left:0; right:0; bottom:0;
+      background: var(--border2);
+      border-radius:0;
+      transition: 0.2s;
+    }
+    .toggle-slider:before {
+      position:absolute; content:'';
+      height:14px; width:14px; left:3px; bottom:3px;
+      background: var(--muted);
+      transition: 0.2s;
+    }
+    .toggle-switch input:checked + .toggle-slider { background: rgba(196,140,56,0.4); }
+    .toggle-switch input:checked + .toggle-slider:before { transform:translateX(16px); background:var(--amber); }
+
     /* ── PRINT / PDF ────────────────────────────────── */
     #print-area { display: none; }
 
@@ -1238,6 +1355,8 @@
       <span>SRC: NVD · CISA KEV · GITHUB · PALO ALTO PSIRT</span>
       <span id="live-time">--:--:--</span>
       <span id="sync-status" style="color: var(--muted)">SYNCING...</span>
+      <span id="company-mode-badge" style="display:none">● COMPANY MODE</span>
+      <button class="profile-btn" onclick="openCompanyModal()">⚙ PROFILE</button>
     </div>
   </header>
 
@@ -1433,6 +1552,11 @@
     let currentSourceFilter = 'ALL';
     let logCount = 0;
 
+    // ── Company Profile ──────────────────────────────────
+    let companyName = '';
+    let companyTechStack = [];    // array of lowercase keyword strings
+    let companyModeActive = false;
+
     // ── Live Clock ──────────────────────────────────────
     function updateClock() {
       const now = new Date();
@@ -1440,6 +1564,7 @@
     }
     setInterval(updateClock, 1000);
     updateClock();
+    loadCompanyProfile();
 
     // ── Log feed ────────────────────────────────────────
     function addLog(type, msg) {
@@ -2384,12 +2509,20 @@
         cvesToShow = cvesToShow.filter(v => getSourceLabel(v) === currentSourceFilter);
       }
 
+      // Company mode filter
+      if (companyModeActive && companyTechStack.length > 0) {
+        cvesToShow = cvesToShow.filter(v => matchesCompanyStack(v));
+      }
+
       // Sort by CVSS desc
       cvesToShow.sort((a, b) => getCvss(b) - getCvss(a));
 
       const countLabel = document.getElementById('cve-count-label');
       if (cvesToShow.length === 0) {
-        feed.innerHTML = '<div class="error-msg">NO VULNERABILITIES MATCH FILTERS</div>';
+        const companyHint = companyModeActive && companyTechStack.length > 0
+          ? ` — Company mode active (${companyTechStack.join(', ')})`
+          : '';
+        feed.innerHTML = `<div class="error-msg">NO VULNERABILITIES MATCH FILTERS${companyHint}</div>`;
         if (countLabel) countLabel.textContent = '';
         return;
       }
@@ -3314,10 +3447,185 @@
       document.getElementById('export-csv-btn').style.display = 'inline-flex';
       document.getElementById('export-pdf-btn').style.display = 'inline-flex';
     }
+
+    // ── Company Profile ───────────────────────────────────
+
+    const COMMON_VENDORS = [
+      'microsoft', 'cisco', 'apache', 'linux', 'google', 'apple', 'oracle',
+      'adobe', 'fortinet', 'palo alto', 'vmware', 'nginx', 'openssl', 'wordpress',
+      'jenkins', 'docker', 'kubernetes', 'python', 'php', 'node', 'java', 'log4j',
+      'atlassian', 'citrix', 'sap', 'ibm', 'juniper', 'f5', 'gitlab', 'confluence'
+    ];
+
+    // In-modal working copy of tech stack (before save)
+    let _modalTechStack = [];
+
+    function loadCompanyProfile() {
+      try {
+        const saved = localStorage.getItem('tw_company_profile');
+        if (saved) {
+          const p = JSON.parse(saved);
+          companyName = p.companyName || '';
+          companyTechStack = Array.isArray(p.companyTechStack) ? p.companyTechStack : [];
+          companyModeActive = !!p.companyModeActive;
+        }
+      } catch (e) { /* ignore parse errors */ }
+      updateCompanyModeUI();
+    }
+
+    function saveCompanyProfile() {
+      companyName = (document.getElementById('company-name-input').value || '').trim();
+      companyTechStack = [..._modalTechStack];
+      companyModeActive = document.getElementById('company-mode-toggle').checked;
+      localStorage.setItem('tw_company_profile', JSON.stringify({ companyName, companyTechStack, companyModeActive }));
+      closeCompanyModal();
+      updateCompanyModeUI();
+      renderCves();
+      renderStats();
+      addLog('SYNC', `Company profile saved: "${companyName || 'unnamed'}" — ${companyTechStack.length} tech(s), mode ${companyModeActive ? 'ON' : 'OFF'}`);
+    }
+
+    function openCompanyModal() {
+      _modalTechStack = [...companyTechStack];
+      document.getElementById('company-name-input').value = companyName;
+      document.getElementById('company-mode-toggle').checked = companyModeActive;
+      renderTechTags();
+      // Render vendor suggestions
+      const suggestEl = document.getElementById('company-suggestions');
+      suggestEl.innerHTML = COMMON_VENDORS.map(v =>
+        `<button class="suggest-tag" onclick="addSuggestTag('${v}')">${v}</button>`
+      ).join('');
+      document.getElementById('company-modal-overlay').classList.add('active');
+    }
+
+    function closeCompanyModal() {
+      document.getElementById('company-modal-overlay').classList.remove('active');
+    }
+
+    function renderTechTags() {
+      const el = document.getElementById('company-tags');
+      if (!el) return;
+      if (_modalTechStack.length === 0) {
+        el.innerHTML = '<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:var(--muted)">No technologies added yet</span>';
+        return;
+      }
+      el.innerHTML = _modalTechStack.map((tag, i) =>
+        `<span class="tech-tag">${tag}<button class="remove-tag" onclick="removeTechTag(${i})" title="Remove">✕</button></span>`
+      ).join('');
+    }
+
+    function addTechTag(event) {
+      if (event) event.preventDefault();
+      const input = document.getElementById('company-tag-input');
+      const raw = input.value.replace(/,$/, '').trim().toLowerCase();
+      if (raw && !_modalTechStack.includes(raw)) {
+        _modalTechStack.push(raw);
+        renderTechTags();
+      }
+      input.value = '';
+      input.focus();
+    }
+
+    function addSuggestTag(vendor) {
+      if (!_modalTechStack.includes(vendor)) {
+        _modalTechStack.push(vendor);
+        renderTechTags();
+      }
+    }
+
+    function removeTechTag(index) {
+      _modalTechStack.splice(index, 1);
+      renderTechTags();
+    }
+
+    function matchesCompanyStack(vuln) {
+      const keywords = companyTechStack;
+      if (!keywords.length) return true;
+      // Check description text
+      const desc = (vuln.cve.descriptions?.find(d => d.lang === 'en')?.value || '').toLowerCase();
+      // Check CPE criteria strings
+      let cpeText = '';
+      try {
+        vuln.cve.configurations?.forEach(c =>
+          c.nodes?.forEach(n =>
+            n.cpeMatch?.forEach(m => { cpeText += ' ' + (m.criteria || ''); })
+          )
+        );
+      } catch (e) { /* ignore */ }
+      cpeText = cpeText.toLowerCase();
+      // Also check vendor/product from affected packages (GitHub/OSV shape)
+      const affectedText = JSON.stringify(vuln.cve.affected || '').toLowerCase();
+      const combined = desc + ' ' + cpeText + ' ' + affectedText;
+      return keywords.some(kw => combined.includes(kw));
+    }
+
+    function updateCompanyModeUI() {
+      const header = document.querySelector('header');
+      const badge = document.getElementById('company-mode-badge');
+      const logo = document.querySelector('.logo');
+      const existingDisplay = document.getElementById('company-name-display');
+      if (existingDisplay) existingDisplay.remove();
+
+      if (companyModeActive && companyName) {
+        header.classList.add('company-mode-active');
+        badge.style.display = '';
+        const nameSpan = document.createElement('span');
+        nameSpan.id = 'company-name-display';
+        nameSpan.textContent = companyName.toUpperCase();
+        logo.appendChild(nameSpan);
+      } else if (companyModeActive) {
+        header.classList.add('company-mode-active');
+        badge.style.display = '';
+      } else {
+        header.classList.remove('company-mode-active');
+        badge.style.display = 'none';
+      }
+    }
   </script>
 
   <!-- Print area (populated by exportSearchPDF, visible only during print) -->
   <div id="print-area"></div>
+
+  <!-- Company Profile Modal -->
+  <div class="modal-overlay" id="company-modal-overlay" onclick="if(event.target===this)closeCompanyModal()">
+    <div class="modal" style="width:560px;max-width:95vw">
+      <div class="modal-header">
+        <div class="modal-title">⚙ COMPANY PROFILE</div>
+        <button class="modal-close" onclick="closeCompanyModal()">✕</button>
+      </div>
+      <div class="modal-body" style="padding:20px;display:flex;flex-direction:column;gap:16px;overflow-y:auto">
+        <div>
+          <label class="profile-label">COMPANY NAME</label>
+          <input type="text" id="company-name-input" class="profile-input" placeholder="e.g. Acme Corp">
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="profile-label" style="margin-bottom:0">ENABLE COMPANY MODE</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="company-mode-toggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted)">Filter CVEs to your tech stack only</span>
+        </div>
+        <div>
+          <label class="profile-label">TECHNOLOGY STACK</label>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-family:'JetBrains Mono',monospace">Add vendors and software your company uses. CVEs will be filtered to match these keywords.</div>
+          <div style="display:flex;gap:6px;margin-bottom:8px">
+            <input type="text" id="company-tag-input" class="profile-input" placeholder="e.g. microsoft, apache, cisco..." onkeydown="if(event.key==='Enter'||event.key===','){addTechTag(event);}" style="flex:1">
+            <button class="date-go" onclick="addTechTag()">+ ADD</button>
+          </div>
+          <div id="company-tags" style="display:flex;flex-wrap:wrap;gap:6px;min-height:32px;margin-bottom:10px"></div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:6px;letter-spacing:1px">QUICK ADD:</div>
+            <div style="display:flex;flex-wrap:wrap;gap:4px" id="company-suggestions"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:8px;border-top:1px solid var(--border)">
+          <button class="date-go" onclick="closeCompanyModal()" style="background:transparent;color:var(--muted);border-color:var(--border2)">CANCEL</button>
+          <button class="date-go" onclick="saveCompanyProfile()" style="background:rgba(196,140,56,0.2);color:var(--amber);border-color:var(--amber)">SAVE PROFILE</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal -->
   <div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()">
