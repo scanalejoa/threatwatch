@@ -802,6 +802,67 @@
       padding-left: 10px;
       margin-left: 4px;
     }
+    #profile-banner {
+      display: none;
+      background: rgba(196,140,56,0.08);
+      border-bottom: 2px solid rgba(196,140,56,0.5);
+      padding: 8px 24px;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    #profile-banner.active { display: flex; }
+    #profile-banner .pb-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 2px;
+      color: var(--amber);
+      opacity: 0.7;
+      white-space: nowrap;
+    }
+    #profile-banner .pb-name {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      color: var(--amber);
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    #profile-banner .pb-divider {
+      width: 1px;
+      height: 18px;
+      background: rgba(196,140,56,0.35);
+      flex-shrink: 0;
+    }
+    #profile-banner .pb-stack {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      align-items: center;
+    }
+    #profile-banner .pb-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      padding: 2px 8px;
+      background: rgba(196,140,56,0.15);
+      border: 1px solid rgba(196,140,56,0.4);
+      color: var(--amber);
+      letter-spacing: 1px;
+    }
+    #profile-banner .pb-edit {
+      margin-left: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      padding: 3px 10px;
+      background: transparent;
+      border: 1px solid rgba(196,140,56,0.35);
+      color: var(--amber);
+      cursor: pointer;
+      letter-spacing: 1px;
+      transition: all 0.15s;
+    }
+    #profile-banner .pb-edit:hover { background: rgba(196,140,56,0.15); border-color: var(--amber); }
 
     .toggle-switch { position:relative; display:inline-block; width:36px; height:20px; }
     .toggle-switch input { opacity:0; width:0; height:0; }
@@ -1359,6 +1420,15 @@
       <button class="profile-btn" onclick="openCompanyModal()">⚙ PROFILE</button>
     </div>
   </header>
+
+  <!-- Active Profile Banner -->
+  <div id="profile-banner">
+    <span class="pb-label">ACTIVE PROFILE</span>
+    <span id="pb-name" class="pb-name"></span>
+    <div class="pb-divider"></div>
+    <div id="pb-stack" class="pb-stack"></div>
+    <button class="pb-edit" onclick="openCompanyModal()">⚙ EDIT PROFILE</button>
+  </div>
 
   <div class="main">
     <!-- Date Range -->
@@ -3566,19 +3636,34 @@
       const existingDisplay = document.getElementById('company-name-display');
       if (existingDisplay) existingDisplay.remove();
 
-      if (companyModeActive && companyName) {
+      const banner = document.getElementById('profile-banner');
+      const pbName = document.getElementById('pb-name');
+      const pbStack = document.getElementById('pb-stack');
+
+      if (companyModeActive) {
         header.classList.add('company-mode-active');
         badge.style.display = '';
-        const nameSpan = document.createElement('span');
-        nameSpan.id = 'company-name-display';
-        nameSpan.textContent = companyName.toUpperCase();
-        logo.appendChild(nameSpan);
-      } else if (companyModeActive) {
-        header.classList.add('company-mode-active');
-        badge.style.display = '';
+
+        // Header logo name
+        if (companyName) {
+          const nameSpan = document.createElement('span');
+          nameSpan.id = 'company-name-display';
+          nameSpan.textContent = companyName.toUpperCase();
+          logo.appendChild(nameSpan);
+        }
+
+        // Profile banner
+        banner.classList.add('active');
+        pbName.textContent = companyName ? companyName.toUpperCase() : 'UNNAMED PROFILE';
+        if (companyTechStack.length > 0) {
+          pbStack.innerHTML = companyTechStack.map(t => `<span class="pb-tag">${t}</span>`).join('');
+        } else {
+          pbStack.innerHTML = '<span style="font-family:\'JetBrains Mono\',monospace;font-size:9px;color:var(--muted);letter-spacing:1px">NO TECH STACK DEFINED</span>';
+        }
       } else {
         header.classList.remove('company-mode-active');
         badge.style.display = 'none';
+        banner.classList.remove('active');
       }
     }
   </script>
