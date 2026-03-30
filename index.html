@@ -103,26 +103,7 @@
 
     #live-time { color: var(--amber); }
 
-    .analyst-tag {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      color: var(--text-bright);
-      border: 1px solid var(--border2);
-      padding: 3px 10px 3px 8px;
-      cursor: pointer;
-      user-select: none;
-      transition: border-color 0.15s, color 0.15s;
-    }
-    .analyst-tag:hover { border-color: var(--amber); color: var(--amber); }
-    .analyst-tag::before {
-      content: '▣';
-      font-size: 9px;
-      color: var(--amber);
-    }
-    #analyst-name { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
-
-    /* ── MAIN ───────────────────────────────────────── */
+/* ── MAIN ───────────────────────────────────────── */
     .main {
       padding: 20px 32px;
       max-width: 1600px;
@@ -811,15 +792,41 @@
       animation: pulse-amber 2s ease-in-out infinite;
     }
     @keyframes pulse-amber { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
-    #company-name-display {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 13px;
+    #profile-active-banner {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      background: rgba(196,140,56,0.08);
+      border: 1px solid var(--amber);
+      padding: 6px 18px;
+      cursor: pointer;
+    }
+    #profile-active-banner:hover { background: rgba(196,140,56,0.15); }
+    #profile-active-banner .pab-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      color: var(--muted);
       letter-spacing: 2px;
-      color: var(--amber);
-      font-weight: 600;
-      border-left: 1px solid var(--border2);
-      padding-left: 10px;
-      margin-left: 4px;
+      text-transform: uppercase;
+    }
+    #profile-active-banner .pab-name {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 22px;
+      letter-spacing: 4px;
+      color: var(--amber2);
+      line-height: 1;
+    }
+    #profile-active-banner .pab-meta {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      color: var(--muted);
+      letter-spacing: 1px;
+    }
+    #profile-active-banner .pab-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--amber);
+      animation: pulse-amber 2s infinite;
+      flex-shrink: 0;
     }
 
     .toggle-switch { position:relative; display:inline-block; width:36px; height:20px; }
@@ -1364,6 +1371,14 @@
 
   <header>
     <div class="logo">THREAT<span>WATCH</span></div>
+    <div id="profile-active-banner" onclick="openCompanyModal()" title="Click to edit profile">
+      <div class="pab-dot"></div>
+      <div>
+        <div class="pab-label">ACTIVE PROFILE</div>
+        <div class="pab-name" id="pab-name">—</div>
+      </div>
+      <div class="pab-meta" id="pab-meta"></div>
+    </div>
     <div class="search-wrap">
       <input type="text" class="search-input" id="search-input" placeholder="Search CVE, vendor, software..."
         onkeydown="if(event.key==='Enter')runSearch()">
@@ -1375,7 +1390,6 @@
       <span id="live-time">--:--:--</span>
       <span id="sync-status" style="color: var(--muted)">SYNCING...</span>
       <span id="company-mode-badge" style="display:none">● COMPANY MODE</span>
-      <span class="analyst-tag" onclick="setAnalystName(true)" title="Click to change analyst name"><span id="analyst-name">ANALYST</span></span>
       <button class="profile-btn" onclick="openCompanyModal()">⚙ PROFILE</button>
     </div>
   </header>
@@ -2956,21 +2970,6 @@
       }, 4000);
     }
 
-    // ── ANALYST PROFILE ───────────────────────────────────
-    function setAnalystName(forcePrompt) {
-      const stored = localStorage.getItem('tw_analyst_name');
-      if (!stored || forcePrompt) {
-        const input = prompt('Enter analyst name:', stored || 'ANALYST');
-        if (input !== null) {
-          const name = input.trim().toUpperCase() || 'ANALYST';
-          localStorage.setItem('tw_analyst_name', name);
-          document.getElementById('analyst-name').textContent = name;
-        }
-      } else {
-        document.getElementById('analyst-name').textContent = stored;
-      }
-    }
-    setAnalystName();
 
     // ── INIT ──────────────────────────────────────────────
     renderAttackGrid();
@@ -3598,18 +3597,22 @@
     function updateCompanyModeUI() {
       const header = document.querySelector('header');
       const badge = document.getElementById('company-mode-badge');
-      const logo = document.querySelector('.logo');
-      const existingDisplay = document.getElementById('company-name-display');
-      if (existingDisplay) existingDisplay.remove();
+      const banner = document.getElementById('profile-active-banner');
+      const pabName = document.getElementById('pab-name');
+      const pabMeta = document.getElementById('pab-meta');
 
-      if (companyModeActive && companyName) {
-        header.classList.add('company-mode-active');
-        badge.style.display = '';
-        const nameSpan = document.createElement('span');
-        nameSpan.id = 'company-name-display';
-        nameSpan.textContent = companyName.toUpperCase();
-        logo.appendChild(nameSpan);
-      } else if (companyModeActive) {
+      if (companyName) {
+        pabName.textContent = companyName.toUpperCase();
+        const parts = [];
+        if (companyTechStack.length) parts.push(companyTechStack.length + ' TECH' + (companyTechStack.length !== 1 ? 'S' : ''));
+        if (companyModeActive) parts.push('FILTERED');
+        pabMeta.textContent = parts.join(' · ');
+        banner.style.display = 'flex';
+      } else {
+        banner.style.display = 'none';
+      }
+
+      if (companyModeActive) {
         header.classList.add('company-mode-active');
         badge.style.display = '';
       } else {
