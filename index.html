@@ -103,6 +103,25 @@
 
     #live-time { color: var(--amber); }
 
+    .analyst-tag {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-bright);
+      border: 1px solid var(--border2);
+      padding: 3px 10px 3px 8px;
+      cursor: pointer;
+      user-select: none;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .analyst-tag:hover { border-color: var(--amber); color: var(--amber); }
+    .analyst-tag::before {
+      content: '▣';
+      font-size: 9px;
+      color: var(--amber);
+    }
+    #analyst-name { font-family: 'Barlow Condensed', sans-serif; font-size: 13px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+
     /* ── MAIN ───────────────────────────────────────── */
     .main {
       padding: 20px 32px;
@@ -1356,6 +1375,7 @@
       <span id="live-time">--:--:--</span>
       <span id="sync-status" style="color: var(--muted)">SYNCING...</span>
       <span id="company-mode-badge" style="display:none">● COMPANY MODE</span>
+      <span class="analyst-tag" onclick="setAnalystName(true)" title="Click to change analyst name"><span id="analyst-name">ANALYST</span></span>
       <button class="profile-btn" onclick="openCompanyModal()">⚙ PROFILE</button>
     </div>
   </header>
@@ -2935,6 +2955,22 @@
         idx++;
       }, 4000);
     }
+
+    // ── ANALYST PROFILE ───────────────────────────────────
+    function setAnalystName(forcePrompt) {
+      const stored = localStorage.getItem('tw_analyst_name');
+      if (!stored || forcePrompt) {
+        const input = prompt('Enter analyst name:', stored || 'ANALYST');
+        if (input !== null) {
+          const name = input.trim().toUpperCase() || 'ANALYST';
+          localStorage.setItem('tw_analyst_name', name);
+          document.getElementById('analyst-name').textContent = name;
+        }
+      } else {
+        document.getElementById('analyst-name').textContent = stored;
+      }
+    }
+    setAnalystName();
 
     // ── INIT ──────────────────────────────────────────────
     renderAttackGrid();
