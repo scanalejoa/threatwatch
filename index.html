@@ -2629,9 +2629,18 @@
       return [...new Set(products)].slice(0, 3);
     }
 
+    // Returns allCves filtered by company mode (if active)
+    function getActiveCves() {
+      if (companyModeActive && companyTechStack.length > 0) {
+        return allCves.filter(v => matchesCompanyStack(v));
+      }
+      return allCves;
+    }
+
     function renderStats() {
+      const activeCves = getActiveCves();
       const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
-      allCves.forEach(v => {
+      activeCves.forEach(v => {
         const s = getSeverity(getCvss(v));
         if (counts[s] !== undefined) counts[s]++;
         else counts['LOW']++;
@@ -2642,7 +2651,7 @@
       document.getElementById('cnt-low').textContent = counts.LOW;
 
       // KEV count from exploited entries
-      const kevCount = allCves.filter(v => v._kevExploited).length;
+      const kevCount = activeCves.filter(v => v._kevExploited).length;
       document.getElementById('cnt-kev').textContent = kevCount || kevData.length || '--';
 
       // Update subtitles with top affected vendors
@@ -2650,7 +2659,7 @@
       for (const [sev, elId] of Object.entries(sevMap)) {
         const el = document.getElementById(elId);
         if (!el) continue;
-        const top = getTopVendors(allCves, sev, 3);
+        const top = getTopVendors(activeCves, sev, 3);
         if (top.length > 0) {
           el.textContent = top.join(', ') + ' · Click for details';
         } else {
@@ -2662,7 +2671,7 @@
     // ── Vendor Chart ──────────────────────────────────────
     function renderVendorChart() {
       const vendorMap = {};
-      allCves.forEach(v => {
+      getActiveCves().forEach(v => {
         const vendor = getVendor(v);
         vendorMap[vendor] = (vendorMap[vendor] || 0) + 1;
       });
@@ -2696,7 +2705,7 @@
       title.textContent = `📊 ${vendor.toUpperCase()} — Vulnerabilities`;
       title.style.color = 'var(--amber)';
 
-      const filtered = allCves.filter(v => getVendor(v) === vendor)
+      const filtered = getActiveCves().filter(v => getVendor(v) === vendor)
         .sort((a, b) => getCvss(b) - getCvss(a));
 
       if (filtered.length === 0) {
@@ -2733,12 +2742,13 @@
     }
     // ── Donut Chart ───────────────────────────────────────
     function renderDonut() {
+      const activeCves = getActiveCves();
       const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, NONE: 0 };
-      allCves.forEach(v => {
+      activeCves.forEach(v => {
         const s = getSeverity(getCvss(v));
         counts[s] = (counts[s] || 0) + 1;
       });
-      const total = allCves.length || 1;
+      const total = activeCves.length || 1;
       const cfg = [
         { label: 'CRITICAL', color: '#ff3e6c', key: 'CRITICAL' },
         { label: 'HIGH', color: '#ff7b00', key: 'HIGH' },
@@ -2803,9 +2813,10 @@
     ];
 
     function renderAttackGrid() {
-      const total = allCves.length || 1;
+      const activeCves = getActiveCves();
+      const total = activeCves.length || 1;
       const counts = ATTACK_DEFS.map(def => {
-        const count = allCves.filter(v => {
+        const count = activeCves.filter(v => {
           const desc = v.cve?.descriptions?.find(d => d.lang === 'en')?.value || '';
           return def.keys.test(desc);
         }).length;
@@ -2867,9 +2878,10 @@
     ];
 
     function renderEmergingThreats() {
-      const total = allCves.length;
+      const activeCves = getActiveCves();
+      const total = activeCves.length;
       const html = EMERGING_DEFS.map(def => {
-        const count = total ? allCves.filter(v => {
+        const count = total ? activeCves.filter(v => {
           const desc = v.cve?.descriptions?.find(d => d.lang === 'en')?.value || '';
           return def.keys.test(desc);
         }).length : 0;
@@ -3517,6 +3529,10 @@
       updateCompanyModeUI();
       renderCves();
       renderStats();
+      renderVendorChart();
+      renderDonut();
+      renderAttackGrid();
+      renderEmergingThreats();
       addLog('SYNC', `Company profile saved: "${companyName || 'unnamed'}" — ${companyTechStack.length} tech(s), mode ${companyModeActive ? 'ON' : 'OFF'}`);
     }
 
