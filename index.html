@@ -8,6 +8,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap"
     rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <style>
     :root {
       --bg: #0D0B09;
@@ -703,6 +704,53 @@
     }
 
     .export-btn:hover { background: var(--amber); color: var(--bg); }
+
+
+    /* ── INVENTORY IMPORT ──────────────────────────── */
+    .inv-drop-zone {
+      border: 1px dashed var(--border2);
+      padding: 14px 12px;
+      text-align: center;
+      cursor: pointer;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--muted);
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+      letter-spacing: 1px;
+      user-select: none;
+    }
+    .inv-drop-zone:hover, .inv-drop-zone.inv-dragover {
+      border-color: var(--amber);
+      background: rgba(196,140,56,0.06);
+      color: var(--amber);
+    }
+    .inv-drop-zone .inv-icon { font-size: 18px; margin-bottom: 4px; }
+    .inv-result {
+      display: none;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      padding: 6px 8px;
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+    .inv-result.ok   { color: var(--low);      border-left: 2px solid var(--low); }
+    .inv-result.warn { color: var(--warn);     border-left: 2px solid var(--warn); }
+    .inv-result.err  { color: var(--critical); border-left: 2px solid var(--critical); }
+    .inv-preview {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .inv-preview-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      padding: 2px 6px;
+      background: rgba(50,100,50,0.18);
+      border: 1px solid rgba(50,100,50,0.5);
+      color: #6aaa6a;
+      letter-spacing: 1px;
+    }
 
     /* ── COMPANY PROFILE ──────────────────────────── */
     .profile-btn {
@@ -2983,6 +3031,19 @@
     }
 
 
+    // INVENTORY FILE IMPORT
+    const INV_VENDOR_COLS = ['vendor','manufacturer','brand','make','publisher','developer','company','provider','supplier','mfr','mfg'];
+    const INV_PRODUCT_COLS = ['software','application','product','app','program','title','model','solution','tool','package'];
+    const INV_SKIP = new Set(['n/a','na','none','unknown','other','yes','no','true','false','null','undefined','','-','any']);
+    function invDragOver(e){e.preventDefault();document.getElementById('inv-drop-zone').classList.add('inv-dragover');}
+    function invDragLeave(){document.getElementById('inv-drop-zone').classList.remove('inv-dragover');}
+    function invDrop(e){e.preventDefault();document.getElementById('inv-drop-zone').classList.remove('inv-dragover');var f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];if(f)parseInventoryFile(f);}
+    function parseInventoryFile(file){if(!file)return;var ext=file.name.split('.').pop().toLowerCase();showInvResult('','Parsing '+file.name+'...');var reader=new FileReader();reader.onload=function(ev){try{var rows=[];if(ext==='csv'){rows=invCsvToRows(ev.target.result);}else if(ext==='xls'||ext==='xlsx'){if(typeof XLSX==='undefined'){showInvResult('err','XLS parser not loaded. Try again or use CSV.');return;}var wb=XLSX.read(ev.target.result,{type:'binary'});var ws=wb.Sheets[wb.SheetNames[0]];rows=XLSX.utils.sheet_to_json(ws,{defval:''});}else{showInvResult('err','Unsupported format. Use .csv, .xls or .xlsx');return;}processInventoryRows(rows);}catch(err){showInvResult('err','Parse error: '+err.message);}};if(ext==='csv')reader.readAsText(file);else reader.readAsBinaryString(file);}
+    function invCsvToRows(text){var lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').trim().split('\n');if(lines.length<2)return[];function splitLine(line){var out=[],cur='',inQ=false;for(var i=0;i<line.length;i++){var c=line[i];if(c==='"'){inQ=!inQ;}else if(c===','&&!inQ){out.push(cur.trim());cur='';}else cur+=c;}out.push(cur.trim());return out;}var headers=splitLine(lines[0]).map(function(h){return h.replace(/^"|"$/g,'').trim();});return lines.slice(1).map(function(line){var vals=splitLine(line),row={};headers.forEach(function(h,i){row[h]=(vals[i]||'').replace(/^"|"$/g,'').trim();});return row;}).filter(function(row){return Object.values(row).some(function(v){return v;});});}
+    function processInventoryRows(rows){if(!rows.length){showInvResult('err','File is empty or unreadable');return;}var allKeys=Object.keys(rows[0]);var scored=allKeys.map(function(k){var lk=k.toLowerCase();var vs=INV_VENDOR_COLS.some(function(c){return lk.includes(c);})?2:0;var ps=INV_PRODUCT_COLS.some(function(c){return lk.includes(c);})?1:0;return{key:k,score:vs+ps,isVendor:vs>0};}).filter(function(c){return c.score>0;}).sort(function(a,b){return b.score-a.score;});var usedCols=scored;if(!usedCols.length){usedCols=allKeys.filter(function(k){var samples=rows.slice(0,10).map(function(r){return String(r[k]||'').trim();}).filter(Boolean);return samples.length>0&&samples.every(function(s){return isNaN(s)&&s.length>=2&&s.length<=40;});}).slice(0,4).map(function(k){return{key:k,isVendor:false};});}if(!usedCols.length){showInvResult('warn','No vendor/brand columns detected. Rename columns to: vendor, manufacturer, software, product');return;}var keywords=new Set();rows.forEach(function(row){usedCols.forEach(function(col){var raw=String(row[col.key]||'').trim().toLowerCase();if(!raw||INV_SKIP.has(raw)||raw.length<2)return;raw.split(/[,;|\/]+/).forEach(function(part){part=part.trim().replace(/[^a-z0-9 .\-_]/g,'').trim();if(!part||part.length<2)return;var fw=part.split(/\s+/)[0].trim();var ml=col.isVendor?2:3;if(fw.length>=ml&&!INV_SKIP.has(fw))keywords.add(fw);});});});var newKws=Array.from(keywords).filter(function(k){return!_modalTechStack.includes(k);}).sort();var dup=keywords.size-newKws.length;if(!newKws.length&&!keywords.size){showInvResult('warn','No keywords extracted. Ensure file has text in labeled columns.');return;}newKws.forEach(function(k){_modalTechStack.push(k);});renderTechTags();var cols=usedCols.map(function(c){return c.key;}).join(', ');var dupNote=dup?' ('+dup+' already in stack)':'';showInvResult('ok',newKws.length+' keyword'+(newKws.length!==1?'s':'')+' imported from '+rows.length+' rows'+dupNote+'|Columns: '+cols,newKws.slice(0,20),newKws.length>20);}
+    function showInvResult(type,msg,previewTags,hasMore){var el=document.getElementById('inv-result');if(!el)return;if(!type){el.className='inv-result';el.style.display='block';el.textContent=msg;return;}el.className='inv-result '+type;el.style.display='block';el.innerHTML=msg.split('|').map(function(l){return'<div>'+l+'</div>';}).join('');if(previewTags&&previewTags.length){var more=hasMore?'<span class="inv-preview-tag" style="color:var(--muted)">+more</span>':'';el.innerHTML+='<div class="inv-preview">'+previewTags.map(function(t){return'<span class="inv-preview-tag">'+t+'</span>';}).join('')+more+'</div>';}}
+
+
     // ── INIT ──────────────────────────────────────────────
     renderAttackGrid();
     renderEmergingThreats();
@@ -3673,6 +3734,19 @@
             <div style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:6px;letter-spacing:1px">QUICK ADD:</div>
             <div style="display:flex;flex-wrap:wrap;gap:4px" id="company-suggestions"></div>
           </div>
+        </div>
+        <div>
+          <label class="profile-label">IMPORT INVENTORY FILE</label>
+          <div class="inv-drop-zone" id="inv-drop-zone"
+               onclick="document.getElementById('inv-file-input').click()"
+               ondragover="invDragOver(event)" ondragleave="invDragLeave(event)" ondrop="invDrop(event)">
+            <div class="inv-icon">📂</div>
+            <div>Drop <strong>CSV</strong> or <strong>XLS / XLSX</strong> file here, or click to browse</div>
+            <div style="margin-top:4px;font-size:9px;color:var(--muted)">Extracts vendor · manufacturer · brand · software · product columns automatically</div>
+          </div>
+          <input type="file" id="inv-file-input" accept=".csv,.xls,.xlsx" style="display:none"
+                 onchange="parseInventoryFile(this.files[0]);this.value=''">
+          <div class="inv-result" id="inv-result"></div>
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:8px;border-top:1px solid var(--border)">
           <button class="date-go" onclick="closeCompanyModal()" style="background:transparent;color:var(--muted);border-color:var(--border2)">CANCEL</button>
