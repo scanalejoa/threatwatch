@@ -3178,7 +3178,7 @@
         rows.push([
           v.cve.id || '',
           score > 0 ? getSeverity(score) : 'UNKNOWN',
-          score > 0 ? score.toFixed(1) : 'UNKNOWN',
+          score > 0 ? score.toFixed(1) : '',
           v.cve.published?.substring(0, 10) || '',
           getSourceLabel(v).toUpperCase(),
           v._kevExploited ? 'YES' : 'NO',
@@ -3239,7 +3239,7 @@
         rows.push([
           v.cve.id || '',
           score > 0 ? getSeverity(score) : 'UNKNOWN',
-          score > 0 ? score.toFixed(1) : 'UNKNOWN',
+          score > 0 ? score.toFixed(1) : '',
           v.cve.published?.substring(0, 10) || '',
           getSourceLabel(v).toUpperCase(),
           v._kevExploited ? 'YES' : 'NO',
@@ -3256,7 +3256,7 @@
         rows.push([
           k.cveID || '',
           score > 0 ? getSeverity(score) : 'UNKNOWN',
-          score > 0 ? score.toFixed(1) : 'UNKNOWN',
+          score > 0 ? score.toFixed(1) : '',
           k.dateAdded || '',
           'KEV',
           'YES',
