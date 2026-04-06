@@ -1937,7 +1937,10 @@
               addLog('SYNC', `${chunkLabel}${totalResults.toLocaleString()} CVEs found — fetching ${totalPages} page(s)`);
             }
 
-            const batch = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'nvd' }));
+            const batch = (data.vulnerabilities || []).filter(v => {
+              const desc = v.cve?.descriptions?.find(d => d.lang === 'en')?.value || '';
+              return !desc.startsWith('** REJECT') && !desc.startsWith('Rejected reason:');
+            }).map(v => ({ ...v, _source: 'nvd' }));
             allNvdResults = [...allNvdResults, ...batch];
             page++;
 
@@ -2073,11 +2076,14 @@
             nvdLookup[v.cve.id] = v;
           }
         });
-        // Inherit CVSS metrics from NVD for KEV entries that have a match
+        // Inherit CVSS metrics from NVD for KEV entries that have a match; default CRITICAL when unknown
         kevCves.forEach(kv => {
           const nvdMatch = nvdLookup[kv.cve.id];
           if (nvdMatch && nvdMatch.cve.metrics) {
             kv.cve.metrics = nvdMatch.cve.metrics;
+          } else {
+            // KEV = actively exploited; default to CRITICAL (9.5) when no CVSS score available
+            kv.cve.metrics = { cvssMetricV31: [{ type: 'Primary', cvssData: { baseScore: 9.5 } }] };
           }
         });
 
@@ -3171,8 +3177,8 @@
         const score = getCvss(v);
         rows.push([
           v.cve.id || '',
-          score > 0 ? getSeverity(score) : 'N/A',
-          score > 0 ? score.toFixed(1) : 'N/A',
+          score > 0 ? getSeverity(score) : 'UNKNOWN',
+          score > 0 ? score.toFixed(1) : 'UNKNOWN',
           v.cve.published?.substring(0, 10) || '',
           getSourceLabel(v).toUpperCase(),
           v._kevExploited ? 'YES' : 'NO',
@@ -3201,7 +3207,7 @@
       html += `<div class="pr-section">CVEs (${total.toLocaleString()})</div>`;
       cvs.forEach(v => {
         const score = getCvss(v);
-        const sev = score > 0 ? getSeverity(score) : 'N/A';
+        const sev = score > 0 ? getSeverity(score) : 'UNKNOWN';
         const scoreStr = score > 0 ? ` — CVSS ${score.toFixed(1)}` : '';
         const desc = v.cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
         const affected = getAffectedProducts(v);
@@ -3232,8 +3238,8 @@
         const score = getCvss(v);
         rows.push([
           v.cve.id || '',
-          score > 0 ? getSeverity(score) : 'N/A',
-          score > 0 ? score.toFixed(1) : 'N/A',
+          score > 0 ? getSeverity(score) : 'UNKNOWN',
+          score > 0 ? score.toFixed(1) : 'UNKNOWN',
           v.cve.published?.substring(0, 10) || '',
           getSourceLabel(v).toUpperCase(),
           v._kevExploited ? 'YES' : 'NO',
@@ -3249,8 +3255,8 @@
         const score = nvdMatch ? getCvss(nvdMatch) : 0;
         rows.push([
           k.cveID || '',
-          score > 0 ? getSeverity(score) : 'N/A',
-          score > 0 ? score.toFixed(1) : 'N/A',
+          score > 0 ? getSeverity(score) : 'UNKNOWN',
+          score > 0 ? score.toFixed(1) : 'UNKNOWN',
           k.dateAdded || '',
           'KEV',
           'YES',
