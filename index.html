@@ -1972,6 +1972,18 @@
         allCves = [...allNvdResults, ...externalCves];
         const loaded = allNvdResults.length;
 
+        // Retroactively enrich KEV entries: copy real NVD CVSS into any KEV entries now in allCves
+        const nvdById = {};
+        allNvdResults.forEach(v => { nvdById[v.cve.id] = v; });
+        allCves.forEach(v => {
+          if (v._source === 'kev' && v._kevExploited) {
+            const nvdMatch = nvdById[v.cve.id];
+            if (nvdMatch && nvdMatch.cve.metrics && Object.keys(nvdMatch.cve.metrics).length > 0) {
+              v.cve.metrics = nvdMatch.cve.metrics;
+            }
+          }
+        });
+
         if (_nvdCancelFlag) {
           document.getElementById('sync-status').textContent = `⏹ CANCELLED (${loaded.toLocaleString()})`;
           document.getElementById('sync-status').style.color = 'var(--warn)';
@@ -2081,9 +2093,6 @@
           const nvdMatch = nvdLookup[kv.cve.id];
           if (nvdMatch && nvdMatch.cve.metrics) {
             kv.cve.metrics = nvdMatch.cve.metrics;
-          } else {
-            // KEV = actively exploited; default to CRITICAL (9.5) when no CVSS score available
-            kv.cve.metrics = { cvssMetricV31: [{ type: 'Primary', cvssData: { baseScore: 9.5 } }] };
           }
         });
 
