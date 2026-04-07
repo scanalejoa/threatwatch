@@ -2656,7 +2656,11 @@
 
       // Source filter
       if (currentSourceFilter !== 'ALL') {
-        cvesToShow = cvesToShow.filter(v => getSourceLabel(v) === currentSourceFilter);
+        if (currentSourceFilter === 'kev') {
+          cvesToShow = cvesToShow.filter(v => v._kevExploited);
+        } else {
+          cvesToShow = cvesToShow.filter(v => getSourceLabel(v) === currentSourceFilter);
+        }
       }
 
       // Company mode filter
@@ -3227,7 +3231,13 @@
     function _getPanelCves() {
       let cvs = allCves.slice();
       if (currentFilter !== 'ALL') cvs = cvs.filter(v => getSeverity(getCvss(v)) === currentFilter);
-      if (currentSourceFilter !== 'ALL') cvs = cvs.filter(v => getSourceLabel(v) === currentSourceFilter);
+      if (currentSourceFilter !== 'ALL') {
+        if (currentSourceFilter === 'kev') {
+          cvs = cvs.filter(v => v._kevExploited);
+        } else {
+          cvs = cvs.filter(v => getSourceLabel(v) === currentSourceFilter);
+        }
+      }
       return cvs.sort((a, b) => getCvss(b) - getCvss(a));
     }
 
