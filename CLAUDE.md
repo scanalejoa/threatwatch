@@ -4,7 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## ThreatWatch — Project Context
 
-Single-page cybersecurity dashboard (`index.html`) that aggregates vulnerability data from 8 sources into a unified real-time feed. Deployed via Cloudflare Pages.
+Single-page cybersecurity dashboard (`index.html`) that aggregates vulnerability data from 8 sources into a unified real-time feed, **plus an integrated AI-native Cloudflare console (formerly the standalone CLOUDCTL project)**. Deployed via Cloudflare Pages.
+
+The merged app combines:
+- **Threat Intelligence**: live CVE feed from NVD, CISA KEV, GitHub, Palo Alto PSIRT, OSV, Ubuntu, MSRC, Red Hat. (Original ThreatWatch.)
+- **Cloudflare Operations**: Claude tool-use over the Cloudflare REST API for DNS / WAF / firewall / Workers / Pages / analytics / cache / bot-mgmt. (Ported from CLOUDCTL v1.0.)
+- **WAF Coverage**: cross-feature that joins critical/KEV CVEs against the zone's deployed WAF rules using a keyword heuristic.
+
+**The standalone CLOUDCTL repo at `d:/claude-waf/` is frozen as v1.0 — do NOT edit it.** All future development happens here. The merge is additive: ThreatWatch's original threat-intel pipeline is unchanged. `index.html.pre-cloudctl.bak` preserves the pre-merge state.
 
 ## Commands
 
@@ -23,9 +30,35 @@ No build step. There are no tests.
 
 ## Architecture
 
-- **Single file**: All HTML, CSS, and JavaScript in `index.html` (~3400 lines). The `<script>` block starts at line 1718.
-- **No build step**: Pure vanilla JS, no frameworks
-- **CORS Proxy**: Cloudflare Worker at `cors-proxy/worker.js` — proxies requests via `?url=<encoded-target>`, enforces an origin allowlist and a domain allowlist. Supports GET and POST (body forwarding).
+- **Single file**: All HTML, CSS, and JavaScript in `index.html` (~5800 lines after merge). Main `<script>` block starts ~line 2422; CLOUDCTL-ported JS lives at the bottom of that block (search for `CLOUDCTL INTEGRATION`).
+- **No build step**: Pure vanilla JS, no frameworks.
+- **Two optional Workers**:
+  - `cors-proxy/worker.js` — ThreatWatch's CVE feed proxy. Routes via `?url=<encoded-target>`, origin + domain allowlists. **Stays as-is.**
+  - **CF API Bridge** (separate, optional) — when set in Setup as `CF_BRIDGE_URL`, the browser routes Cloudflare REST calls through this Worker (token sent as `X-CF-Token`). Required when direct browser → `api.cloudflare.com` calls are CORS-blocked. The reference Worker lives in the frozen `d:/claude-waf/` repo. The two Workers are **NOT merged** — different roles, different allowlists.
+
+### Layout shell (post-merge)
+
+```
+<setup-overlay>            ← CF + Anthropic key configuration (sessionStorage)
+<header>                   ← logo, profile banner, search, CF zone selector, AI/CF buttons
+<div class="app-layout">
+  <nav class="sidebar">    ← THREAT INTEL · CLOUDFLARE · CONFIG groups
+  <div class="main-area">
+    <div class="command-bar"> ← AI input + view-aware suggestion chips
+    <div class="view-area">
+      <div class="view active" id="view-threat-intel">  ← original dashboard
+      <div class="view"        id="view-cf-overview">
+      <div class="view"        id="view-cf-dns">
+      <div class="view"        id="view-cf-waf">
+      <div class="view"        id="view-cf-firewall">
+      <div class="view"        id="view-cf-workers">
+      <div class="view"        id="view-cf-pages">
+      <div class="view"        id="view-cf-analytics">
+      <div class="view"        id="view-waf-coverage">    ← cross-feature
+<aside class="ai-drawer">  ← collapsible right panel; toggled by header [⚡ AI] button
+```
+
+`showView(name, navEl)` toggles `.view.active`, updates the sidebar's active item, swaps suggestion chips via `setSuggestionsForView(name)`, and lazy-loads CF data when entering an empty CF view (if connected).
 
 ## Data Sources
 
@@ -42,6 +75,7 @@ No build step. There are no tests.
 
 ## Key Global State
 
+### ThreatWatch (original)
 ```js
 let allCves = [];             // unified CVE array — all sources merged here
 let kevData = [];             // raw KEV catalog for cross-reference
@@ -50,6 +84,18 @@ let currentSourceFilter = 'ALL';  // source filter: ALL/NVD/KEV/GITHUB/PALOALTO/
 let currentRangeDays = 7;         // active date range; -1 = custom range
 let _nvdCancelFlag = false;       // cancels in-progress paginated NVD loads
 let _currentLoadKeyword = '';     // active keyword for long/custom range searches
+let companyModeActive = false;    // tech-stack filter toggle (localStorage: tw_company_profile)
+let companyTechStack = [];        // lowercase keyword strings
+```
+
+### CLOUDCTL integration (sessionStorage; cleared on tab close)
+```js
+let CF_TOKEN, CF_ACCOUNT_ID, ANTHROPIC_KEY, CF_BRIDGE_URL = '';
+let currentZoneId = '', currentZoneName = '';
+let chatHistory = [];          // API-shaped messages for Claude tool-use loop
+let zoneData = {};
+let currentView = 'threat-intel';
+const CF_API = 'https://api.cloudflare.com/client/v4';
 ```
 
 ## Key Functions (line references)
@@ -145,9 +191,64 @@ The function handles several cases in this order inside its `try` block:
 - Chunk dates must use actual UTC timestamps — using `T00:00:00.000`/`T23:59:59.000` makes `pubEndDate` land in the future, which causes NVD to reject paginated requests (`startIndex > 0`)
 - If Cloudflare Pages deployments get stuck in "Queued", push an empty commit to force a new build: `git commit --allow-empty -m "Trigger redeploy" && git push`
 
+## CLOUDCTL Integration — Operational Notes
+
+### Function naming convention (avoid collisions)
+The CF helpers are renamed from CLOUDCTL's originals so they don't clash with anything in ThreatWatch's existing code:
+
+| CLOUDCTL (frozen) | Merged ThreatWatch |
+|---|---|
+| `cfGet/Post/Put/Patch/Delete` | `cloudflareCfGet/Post/Put/Patch/Delete` |
+| `cfFetch` | `cloudflareCfFetch` |
+| `TOOLS` (tool registry) | `CF_TOOLS` |
+| `showSection` | `showView` (different shape — toggles full views, not just panels) |
+| `renderSection` | `renderCfSection` |
+| `loadOverview` | `loadCfOverview` |
+| `initApp` | `initCfApp` |
+
+When porting changes from CLOUDCTL v1.0, apply the same rename to the new code.
+
+### AI command flow
+1. User types in `#cmd-input`, presses Enter → `sendCommand()`.
+2. Query pushed to `chatHistory` (API-shaped). Drawer opens automatically.
+3. `runAgentLoop()` POSTs to `https://api.anthropic.com/v1/messages` with:
+   - `model: 'claude-sonnet-4-6'`
+   - `system: buildUnifiedSystem()` — dynamically rebuilt every turn; injects current CVE counts, KEV count, active filters, company stack, CF account, current zone, and current view.
+   - `tools: Object.values(CF_TOOLS).map(t => t.schema)`
+   - Browser-side header: `anthropic-dangerous-direct-browser-access: true`
+4. For each `tool_use` block: `read` runs immediately; `write` and `destructive` go through `confirmToolCall()` (renders an inline confirm card in the chat with CONFIRM / CANCEL buttons). **The confirm gate is load-bearing** — the CF token has Edit scope and auto-executing writes would be destructive.
+5. Tool results (or cancellations) are pushed as `tool_result` blocks in the next turn. Loop until `stop_reason !== 'tool_use'` or `MAX_TURNS = 8`.
+6. Side effect: when a tool returns array data, `renderDataInPanelByKind()` also fills the matching `#cf-<kind>-body` so the chat result is mirrored in the CF view body.
+
+### Adding a new Cloudflare tool
+Append an entry to `CF_TOOLS`. That's the entire extension point — the schema teaches Claude what's available, `run()` does the call, `class` selects the confirmation gate, `panelKind` selects the renderer in `formatCfResultByKind` / `renderCfSection`.
+
+### WAF Coverage cross-feature (`renderWafCoverage`)
+Joins `allCves[]` against deployed WAF rules using a keyword heuristic:
+1. **Candidates**: `c._kevExploited || getCvss(c) >= 9.0`. If `companyModeActive`, additionally restrict to entries whose JSON contains a tech-stack keyword. Capped at 80 rows.
+2. **Per-CVE keywords**: vendor + product from `cve.containers.cna.affected[]` if present, else regex out a known-product list (Apache, Log4j, Fortinet, Citrix, Microsoft, etc.) from the description.
+3. **Rule searchable surface**: `rule.filter.expression + rule.description + rule.action`, lowercased.
+4. **Match**: case-insensitive `includes()` of any keyword against any rule's surface. ≥1 match = covered, 0 = uncovered.
+5. **Suggest action**: per-uncovered-row button injects `Draft a Cloudflare WAF rule that mitigates likely exploitation of CVE-XXX (target keyword: "...")` into `#cmd-input` and opens the AI drawer.
+
+This is a **triage signal, not a vulnerability scanner**. The view shows a permanent disclaimer.
+
+### Setup modal
+Auto-prefills sessionStorage values when reopened. Requires CF token + account ID together (not just one), but Anthropic key is independent. Threat-Intel works with no keys configured. The 5-minute auto-refresh continues regardless of which view is active.
+
+### Things to watch when editing
+- The `<script>` block contains BOTH ThreatWatch's globals (top, line ~2422) AND the CLOUDCTL port (bottom, search `CLOUDCTL INTEGRATION`). Add new CF code to the bottom; new threat-intel code wherever the existing pattern fits.
+- `chatHistory` is intentionally not reset on view switch — cross-view continuity beats stale-zone risk.
+- `escapeHtml()` is defined in the CLOUDCTL port (bottom of script). If you need it for new ThreatWatch code, reuse it.
+- The security-warning hook at `~/.claude/plugins/.../security_reminder_hook.py` flags `innerHTML =` patterns. The integrated code uses `innerHTML` consistently (with `escapeHtml()` on every dynamic value), matching CLOUDCTL's pattern. Don't refactor wholesale just to silence the hook.
+
 ## Deployment
 
-- **Dashboard**: push to `main` → Cloudflare Pages auto-deploys `index.html`
-- **CORS proxy**: `cd cors-proxy && npx wrangler deploy` (deployed separately — not auto-deployed)
+- **Dashboard**: push to `main` → Cloudflare Pages auto-deploys `index.html`.
+- **CVE CORS proxy**: `cd cors-proxy && npx wrangler deploy` (deployed separately — not auto-deployed). Same allowlists as before.
+- **CF API Bridge** (optional): if direct browser → CF API is CORS-blocked, deploy CLOUDCTL's `worker.js` separately and paste its URL into Setup → "CF API BRIDGE URL".
 - Live URL: `https://threatwatch-7du.pages.dev/`
-- Proxy URL: `https://threatwatch-cors-proxy.scanalejoa.workers.dev`
+- CVE Proxy URL: `https://threatwatch-cors-proxy.scanalejoa.workers.dev`
+
+## Git push
+after a change in the application or a fix ask me if i want you to push it directly to git repository
