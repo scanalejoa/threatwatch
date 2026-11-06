@@ -1,6 +1,6 @@
 # 🛡️ THREATWATCH — Real-Time Security Dashboard
 
-A live cybersecurity dashboard that aggregates vulnerability data from **4 independent sources** into a single, dark-themed command-center interface.
+A live security dashboard that merges vulnerability data from **8 feeds** into one view, scores exploit likelihood with **EPSS**, and includes an **AI-driven Cloudflare console** that can check your WAF rules against the CVEs that matter.
 
 **Live:** [threatwatch-7du.pages.dev](https://threatwatch-7du.pages.dev/)
 
@@ -12,127 +12,104 @@ A live cybersecurity dashboard that aggregates vulnerability data from **4 indep
 
 ## ✨ Features
 
-### Live Data Feeds (4 Sources)
-- **NVD CVE Feed** — Latest vulnerabilities from NIST, with CVE IDs, severity badges, and CVSS scores
-- **CISA KEV Catalog** — Actively exploited vulnerabilities tracked by CISA
-- **GitHub Security Advisories** — Reviewed security advisories from the GitHub ecosystem
-- **Palo Alto PSIRT** — Vendor-specific advisories from Palo Alto Networks
-- **Auto-refresh** every 5 minutes
-- **Source status pills** — Green = live, Yellow = fallback/error
+### Threat intelligence
+- **8 live feeds** — NVD, CISA KEV, GitHub Security Advisories, Palo Alto PSIRT, OSV, Ubuntu, Microsoft MSRC, Red Hat. Duplicates are merged: if GitHub or KEV reports a CVE NVD already has, the entry shows both sources and gains any score or KEV status the other feed had.
+- **Honest date ranges** — 7D / 30D / 90D / custom. Every feed is filtered to the selected range (KEV by the date CISA added the entry); the source pills show "in range / fetched".
+- **Severity cards** — Critical, High, Medium, Low, **Unscored** (no CVSS yet) and CISA KEV. Unscored is never counted as Low.
+- **CVE detail panel** — click any row: CVSS with vector, EPSS probability and percentile, KEV due date and required action, CWE, affected products, references, matching Cloudflare WAF rules, and buttons to ask the AI, copy the ID or watch the vendor.
+- **Feed tools** — sort by CVSS, newest, EPSS or KEV first; paging (50 per page); filters for severity, source, **NEW since your last visit** and **watchlist**.
+- **Timeline** — new CVEs per day (per week for long ranges), stacked by severity, with hover details.
+- **Charts** — top vendors (distro/package feeds excluded), severity donut, attack categories and threat themes (keyword matches; click a tile to see its CVEs).
+- **Company profile** — tech-stack filter (company mode), inventory import from CSV/XLSX, a highlight-only **watchlist**, and optional **browser alerts** when a newly exploited (KEV) CVE matches your stack or watchlist.
+- **Search** — CVE ID, vendor or keyword across loaded data and the NVD API (plus Palo Alto PSIRT for PAN-SA IDs).
+- **Shareable views** — filters, range, sort, page, open CVE and current view live in the URL (`#range=30&sev=CRITICAL&sort=epss&cve=CVE-…`).
+- **Exports** — CSV (all matching rows, spreadsheet-safe) and print/PDF.
+- **Activity log** — real events only: feed loads and errors, new critical CVEs since the last refresh, new KEV entries since your last visit.
 
-### Interactive Dashboard
-- **Stat Cards** — Click CRITICAL / HIGH / MEDIUM / LOW cards to view detailed CVE lists with affected products
-- **Top Vendors Chart** — Click any vendor bar to see all their vulnerabilities
-- **Severity Donut Chart** — Visual breakdown of CVE severity distribution
-- **Threat Activity Grid** — Animated global threat visualization
+### Cloudflare console (optional)
+- Connect a Cloudflare API token + account ID and an Anthropic API key in **Setup** (keys stay in `sessionStorage`).
+- Views for DNS, WAF rules, IP firewall rules, Workers, Pages and analytics.
+- **AI command bar** — Claude (Sonnet 5.5 by default; Opus 5.5 or Haiku 5.5 selectable) runs Cloudflare operations through tool use. Every write or delete asks for confirmation first.
+- **WAF Coverage** — joins critical/KEV CVEs against your deployed WAF rules by keyword and offers to draft a rule for uncovered ones. A triage signal, not a scanner.
 
-### 🔍 Live Search
-- Search for any **CVE ID**, **vendor**, **software**, or **keyword**
-- Searches both local cache **and** the NVD API in real-time
-- Results sorted by criticality (CRITICAL first)
-
-### 📅 Date Range Selector
-- **7D** (default) — Fast load, focused on latest threats
-- **30D / 90D** — Broader historical view
-- **CUSTOM** — Pick any start/end date range
-
-### CVE Details
-- Clickable CVE IDs linked to NVD detail pages
-- CVSS scores with color-coded severity
-- Affected vendor/product information extracted from CPE data
-- Vulnerability descriptions
+### Works everywhere
+- Responsive down to phone width (off-canvas navigation below 900px).
+- Keyboard accessible: rows, cards, tiles and bars open with Enter; Esc closes panels.
+- Text colours meet WCAG AA contrast; chart colours are checked for colour-blind separation.
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick start
 
-### Prerequisites
-- [Node.js](https://nodejs.org/) (v14+)
+Requires [Node.js](https://nodejs.org/) 18+ (only for the dev server and tests — the site itself has no build step).
 
-### Install & Run
 ```bash
-# Clone or download the project
-cd security_dashboard
-
-# Install dependencies
-npm install
-
-# Start the local dev server
-npm run dev
+git clone https://github.com/scanalejoa/threatwatch.git
+cd threatwatch
+npm run dev     # http://localhost:3000
+npm test        # unit tests (node:test, no dependencies)
 ```
 
-The dashboard will be available at **http://localhost:3000**
+Use port 3000: the CORS proxy only accepts requests from `localhost:3000` and the production domains.
 
 ---
 
-## 📁 Project Structure
+## 📁 Project structure
 
 ```
-security_dashboard/
-├── index.html          # Single-file dashboard (HTML + CSS + JS)
+threatwatch/
+├── index.html          # Markup
+├── css/app.css         # Styles (colour tokens on :root)
+├── js/
+│   ├── core.js         # Pure helpers: scoring, escaping, merging, sorting, CSV, URL state (unit-tested)
+│   ├── app.js          # Threat-intel dashboard: feeds, rendering, detail panel, EPSS, search, exports
+│   ├── cloudctl.js     # Cloudflare console + Claude agent loop
+│   └── main.js         # Start-up wiring (loaded last)
+├── favicon.svg
 ├── cors-proxy/
-│   ├── worker.js       # Cloudflare Worker CORS proxy
-│   └── wrangler.toml   # Worker deployment config
-├── package.json        # Project config & dev server script
-└── README.md           # This file
+│   ├── worker.js       # Cloudflare Worker CORS proxy (host allowlist)
+│   └── wrangler.toml
+├── tests/              # node:test suites for core.js and the proxy
+└── package.json
 ```
 
 ---
 
-## 🔌 Data Sources
+## 🔌 Data sources
 
-| Source | API | Data | CORS Proxy |
-|--------|-----|------|------------|
-| [NVD](https://nvd.nist.gov/) | `services.nvd.nist.gov/rest/json/cves/2.0` | CVE vulnerabilities, CVSS scores, CPE data | No (CORS-friendly) |
-| [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | `www.cisa.gov/.../known_exploited_vulnerabilities.json` | Actively exploited vulnerabilities | **Yes** |
-| [GitHub Advisories](https://github.com/advisories) | `api.github.com/advisories` | Reviewed security advisories | No (CORS-friendly) |
-| [Palo Alto PSIRT](https://security.paloaltonetworks.com/) | `security.paloaltonetworks.com/json` | Palo Alto Networks advisories | Fallback |
+| Source | API | Via proxy |
+|--------|-----|-----------|
+| [NVD](https://nvd.nist.gov/) | `services.nvd.nist.gov/rest/json/cves/2.0` | No |
+| [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | `www.cisa.gov/.../known_exploited_vulnerabilities.json` | Yes |
+| [GitHub Advisories](https://github.com/advisories) | `api.github.com/advisories` | No |
+| [Palo Alto PSIRT](https://security.paloaltonetworks.com/) | `security.paloaltonetworks.com/json` | Yes |
+| [OSV](https://osv.dev/) | `api.osv.dev/v1/querybatch` | Fallback |
+| [Ubuntu](https://ubuntu.com/security/notices) | `ubuntu.com/security/notices.json` | Yes |
+| [Microsoft MSRC](https://msrc.microsoft.com/) | `api.msrc.microsoft.com/cvrf/v3.0` | Yes |
+| [Red Hat](https://access.redhat.com/security/data) | `access.redhat.com/hydra/rest/securitydata` | Fallback |
+| [EPSS (FIRST)](https://www.first.org/epss/) | `api.first.org/data/v1/epss` | Fallback |
 
-> **Note:** The NVD API has rate limits (5 requests per 30 seconds without an API key). If requests fail, the dashboard falls back to demo data.
+> The NVD API allows 5 requests per 30 seconds without a key, so long ranges load page by page. If NVD is unreachable, the dashboard shows the other feeds and offers clearly labelled demo data.
 
 ---
 
-## 🌐 CORS Proxy
+## 🌐 CORS proxy
 
-A lightweight Cloudflare Worker (`cors-proxy/worker.js`) proxies requests to APIs that block browser CORS. It:
+`cors-proxy/worker.js` proxies the feeds that don't send CORS headers. It only accepts HTTPS targets on an allowlist of API hosts (exact host or subdomain — look-alike domains are rejected) and only answers the allowed origins.
 
-- Allowlists specific origins (`threatwatch-7du.pages.dev`, `localhost:3000`)
-- Allowlists specific target domains (CISA, Palo Alto, Red Hat, etc.)
-- Adds proper `Access-Control-Allow-Origin` headers
-
-**Deployed at:** `threatwatch-cors-proxy.scanalejoa.workers.dev`
-
-### Deploying the Worker
 ```bash
 cd cors-proxy
-npx wrangler login    # One-time auth
-npx wrangler deploy   # Deploy to Cloudflare
+npx wrangler login    # one-time
+npx wrangler deploy
 ```
 
----
-
-## 🎨 Design
-
-- **Dark theme** with neon accent colors
-- Fonts: [Orbitron](https://fonts.google.com/specimen/Orbitron) (headings), [Share Tech Mono](https://fonts.google.com/specimen/Share+Tech+Mono) (data)
-- Glassmorphism panels with subtle glow effects
-- Responsive layout
-- CSS animations for threat activity grid
+**Deployed at:** `threatwatch-cors-proxy.scanalejoa.workers.dev`. Redeploy after changing the allowlist (EPSS needs `api.first.org`).
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ Tech stack
 
-- **HTML5** — Structure
-- **CSS3** — Styling (vanilla, no frameworks)
-- **JavaScript** — Logic (vanilla, no frameworks)
-- **Cloudflare Pages** — Static hosting
-- **Cloudflare Workers** — CORS proxy
-- **serve** — Local dev server
-
-No build step required. The dashboard is a single HTML file.
-
----
+Vanilla HTML, CSS and JavaScript · Cloudflare Pages (hosting) · Cloudflare Workers (proxy) · [SheetJS](https://sheetjs.com/) for inventory import · Fonts: Bebas Neue, Barlow Condensed, JetBrains Mono.
 
 ## 📝 License
 

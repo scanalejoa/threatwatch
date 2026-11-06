@@ -1,8 +1,9 @@
 {
     "name": "threatwatch-security-dashboard",
-    "version": "1.0.0",
-    "description": "THREATWATCH — Global Security Dashboard with live NVD and CISA KEV feeds",
+    "version": "1.1.0",
+    "description": "THREATWATCH — live CVE / KEV dashboard with an AI-driven Cloudflare console",
     "scripts": {
-        "dev": "npx -y serve ."
+        "dev": "npx -y serve . -l 3000",
+        "test": "node --test \"tests/*.test.js\""
     }
 }

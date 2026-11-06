@@ -5,6 +5,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>THREATWATCH — Global Security Dashboard</title>
+  <meta name="description" content="Live CVE and exploited-vulnerability dashboard with Cloudflare WAF coverage.">
+  <meta name="theme-color" content="#141210">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link
     href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap"
     rel="stylesheet">
@@ -42,7 +45,16 @@
         <div class="field-group">
           <label class="field-label">ANTHROPIC API KEY</label>
           <input type="password" class="field-input" id="anthropic-key" placeholder="sk-ant-...">
-          <div class="field-hint">Powers the AI command bar (Claude tool use). <a href="https://console.anthropic.com/" target="_blank">Get key →</a></div>
+          <div class="field-hint">Powers the AI command bar (Claude tool use). <a href="https://console.anthropic.com/" target="_blank" rel="noopener">Get key →</a></div>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="ai-model">AI MODEL</label>
+          <select class="field-input" id="ai-model">
+            <option value="claude-sonnet-5-5">Claude Sonnet 5.5 — balanced (default)</option>
+            <option value="claude-opus-5-5">Claude Opus 5.5 — most capable, higher cost</option>
+            <option value="claude-haiku-5-5">Claude Haiku 5.5 — fastest, lowest cost</option>
+          </select>
+          <div class="field-hint">Remembered in this browser (localStorage). Not a secret.</div>
         </div>
         <div class="field-group">
           <label class="field-label">CF API BRIDGE URL (optional)</label>
@@ -61,6 +73,7 @@
   </div>
 
   <header>
+    <button class="menu-btn" id="menu-btn" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar" onclick="toggleSidebar()">☰</button>
     <div class="logo">THREAT<span>WATCH</span></div>
     <div id="profile-active-banner" onclick="openCompanyModal()" title="Click to edit profile">
       <div class="pab-dot"></div>
@@ -71,14 +84,13 @@
       <div class="pab-meta" id="pab-meta"></div>
     </div>
     <div class="search-wrap">
-      <input type="text" class="search-input" id="search-input" placeholder="Search CVE, vendor, software..."
+      <input type="search" class="search-input" id="search-input" placeholder="Search CVE, vendor, software…" aria-label="Search CVEs"
         onkeydown="if(event.key==='Enter')runSearch()">
-      <button class="search-btn" onclick="runSearch()">&#x1F50D; SEARCH</button>
+      <button class="search-btn" onclick="runSearch()" aria-label="Search">&#x1F50D;<span class="search-btn-text"> SEARCH</span></button>
     </div>
     <div class="header-meta">
-      <span><span class="status-dot"></span>LIVE FEED</span>
-      <span>SRC: NVD · CISA KEV · GITHUB · PALO ALTO PSIRT</span>
-      <span id="live-time">--:--:--</span>
+      <span class="hm-live"><span class="status-dot"></span>LIVE</span>
+      <span id="live-time" class="hm-clock">--:--:--</span>
       <span id="sync-status" style="color: var(--muted)">SYNCING...</span>
       <span id="company-mode-badge" style="display:none">● COMPANY MODE</span>
       <!-- ─── CLOUDCTL: zone selector (hidden until connected) ─── -->
@@ -100,7 +112,8 @@
        ═════════════════════════════════════════════════════════ -->
   <div class="app-layout">
 
-    <nav class="sidebar">
+    <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="toggleSidebar(false)"></div>
+    <nav class="sidebar" id="sidebar" aria-label="Main navigation">
       <div class="sidebar-section">
         <div class="sidebar-label">THREAT INTEL</div>
         <div class="nav-item active" data-view="threat-intel" onclick="showView('threat-intel', this)">
@@ -172,9 +185,9 @@
     <div class="range-bar">
       <span class="range-label">TIME RANGE:</span>
       <div class="range-tabs">
-        <button class="rtab active" onclick="setRange(7, this)">7D</button>
-        <button class="rtab" onclick="setRange(30, this)">30D</button>
-        <button class="rtab" onclick="setRange(90, this)">90D</button>
+        <button class="rtab active" data-range="7" onclick="setRange(7, this)">7D</button>
+        <button class="rtab" data-range="30" onclick="setRange(30, this)">30D</button>
+        <button class="rtab" data-range="90" onclick="setRange(90, this)">90D</button>
         <button class="rtab" id="rtab-custom" onclick="toggleCustomRange(this)">CUSTOM</button>
       </div>
       <div class="custom-dates" id="custom-dates">
@@ -200,6 +213,8 @@
       </div>
     </div>
 
+    <div class="notice-banner" id="notice-banner" role="status" hidden></div>
+
     <!-- Source Status -->
     <div class="source-bar">
       <span class="range-label">SOURCES:</span>
@@ -215,31 +230,51 @@
 
     <!-- Stats Bar -->
     <div class="stats-bar">
-      <div class="stat-card critical" onclick="openModal('CRITICAL')">
+      <div class="stat-card critical" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()" onclick="openModal('CRITICAL')">
         <div class="stat-label">CRITICAL CVEs</div>
         <div class="stat-value" id="cnt-critical">--</div>
         <div class="stat-sub">CVSS 9.0–10.0 · Click for details</div>
       </div>
-      <div class="stat-card high" onclick="openModal('HIGH')">
+      <div class="stat-card high" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()" onclick="openModal('HIGH')">
         <div class="stat-label">HIGH CVEs</div>
         <div class="stat-value" id="cnt-high">--</div>
         <div class="stat-sub">CVSS 7.0–8.9 · Click for details</div>
       </div>
-      <div class="stat-card medium" onclick="openModal('MEDIUM')">
+      <div class="stat-card medium" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()" onclick="openModal('MEDIUM')">
         <div class="stat-label">MEDIUM CVEs</div>
         <div class="stat-value" id="cnt-medium">--</div>
         <div class="stat-sub">CVSS 4.0–6.9 · Click for details</div>
       </div>
-      <div class="stat-card low" onclick="openModal('LOW')">
-        <div class="stat-label">LOW / INFO</div>
+      <div class="stat-card low" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()" onclick="openModal('LOW')">
+        <div class="stat-label">LOW CVEs</div>
         <div class="stat-value" id="cnt-low">--</div>
         <div class="stat-sub">CVSS 0.1–3.9 · Click for details</div>
       </div>
-      <div class="stat-card info" onclick="openModal('KEV')">
-        <div class="stat-label">CISA KEV<span class="info-tip" data-tip="Filtered by date CISA added the CVE to their exploited list&#10;— not the CVE publication date.&#10;&#34;7 days&#34; = newly flagged as exploited this week."><i class="info-tip-icon">i</i></span></div>
+      <div class="stat-card unscored" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()" onclick="openModal('UNSCORED')">
+        <div class="stat-label">UNSCORED<span class="info-tip" tabindex="0" data-tip="No CVSS score yet.&#10;NVD usually scores new CVEs within days;&#10;distro feeds (Ubuntu) carry no scores."><i class="info-tip-icon">i</i></span></div>
+        <div class="stat-value" id="cnt-unscored">--</div>
+        <div class="stat-sub">No CVSS yet · Click for details</div>
+      </div>
+      <div class="stat-card info" role="button" tabindex="0" onkeydown="if(event.key==='Enter')this.click()" onclick="openModal('KEV')">
+        <div class="stat-label">CISA KEV<span class="info-tip" tabindex="0" data-tip="Filtered by date CISA added the CVE to their exploited list&#10;— not the CVE publication date.&#10;&#34;7 days&#34; = newly flagged as exploited this week."><i class="info-tip-icon">i</i></span></div>
         <div class="stat-value" id="cnt-kev">--</div>
         <div class="stat-sub">Actively Exploited · Click for details</div>
       </div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="panel timeline-panel">
+      <div class="panel-header">
+        <div class="panel-title" id="timeline-title">New CVEs per day</div>
+        <div class="chart-legend" aria-hidden="true">
+          <span><i style="background:var(--critical)"></i>CRITICAL</span>
+          <span><i style="background:var(--high)"></i>HIGH</span>
+          <span><i style="background:var(--medium)"></i>MEDIUM</span>
+          <span><i style="background:var(--low)"></i>LOW</span>
+          <span><i style="background:var(--unscored)"></i>UNSCORED</span>
+        </div>
+      </div>
+      <div class="timeline-chart" id="timeline-chart"></div>
     </div>
 
     <!-- Dashboard Grid -->
@@ -247,32 +282,48 @@
 
       <!-- Unified Vulnerability Feed -->
       <div class="panel">
-        <div class="panel-header">
-          <div style="display:flex;align-items:center;gap:12px">
+        <div class="panel-header feed-header">
+          <div class="feed-row">
             <div class="panel-title">⚡ All Vulnerabilities</div>
-            <span id="cve-count-label" style="font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace"></span>
+            <span id="cve-count-label" class="feed-count"></span>
+            <button id="new-since-chip" class="new-since-chip" hidden onclick="toggleNewOnly()" title="Show only entries new since your last visit"></button>
+            <div class="feed-actions">
+              <label class="sort-label" for="sort-select">SORT</label>
+              <select id="sort-select" class="sort-select" onchange="setSort(this.value)">
+                <option value="cvss">CVSS ↓</option>
+                <option value="date">Newest</option>
+                <option value="epss">EPSS ↓</option>
+                <option value="kev">KEV first</option>
+              </select>
+              <button id="panel-export-csv-btn" class="export-btn" onclick="exportPanelCSV()" title="Export every matching row as CSV" style="display:inline-flex">↓ CSV</button>
+              <button id="panel-export-pdf-btn" class="export-btn" onclick="exportPanelPDF()" title="Print / Save as PDF" style="display:inline-flex">↓ PDF</button>
+              <button class="refresh-btn" id="refresh-nvd" onclick="refreshAll()">↻ REFRESH</button>
+            </div>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <div class="filter-tabs">
-              <button class="ftab active" onclick="filterSeverity('ALL', this)">ALL</button>
-              <button class="ftab" onclick="filterSeverity('CRITICAL', this)">CRIT</button>
-              <button class="ftab" onclick="filterSeverity('HIGH', this)">HIGH</button>
-              <button class="ftab" onclick="filterSeverity('MEDIUM', this)">MED</button>
+          <div class="feed-row">
+            <div class="filter-tabs" id="severity-tabs" role="group" aria-label="Severity">
+              <button class="ftab active" data-sev="ALL" onclick="filterSeverity('ALL', this)">ALL</button>
+              <button class="ftab" data-sev="CRITICAL" onclick="filterSeverity('CRITICAL', this)">CRIT</button>
+              <button class="ftab" data-sev="HIGH" onclick="filterSeverity('HIGH', this)">HIGH</button>
+              <button class="ftab" data-sev="MEDIUM" onclick="filterSeverity('MEDIUM', this)">MED</button>
+              <button class="ftab" data-sev="LOW" onclick="filterSeverity('LOW', this)">LOW</button>
+              <button class="ftab" data-sev="UNSCORED" onclick="filterSeverity('UNSCORED', this)">UNSCORED</button>
             </div>
-            <div class="filter-tabs" id="source-tabs">
-              <button class="ftab active" onclick="filterSource('ALL', this)">ALL SOURCES</button>
-              <button class="ftab" onclick="filterSource('nvd', this)">NVD</button>
-              <button class="ftab" onclick="filterSource('kev', this)">KEV</button>
-              <button class="ftab" onclick="filterSource('github', this)">GITHUB</button>
-              <button class="ftab" onclick="filterSource('paloalto', this)">PALOALTO</button>
-              <button class="ftab" onclick="filterSource('osv', this)">OSV</button>
-              <button class="ftab" onclick="filterSource('ubuntu', this)">UBUNTU</button>
-              <button class="ftab" onclick="filterSource('msrc', this)">MSRC</button>
-              <button class="ftab" onclick="filterSource('redhat', this)">REDHAT</button>
+            <div class="filter-tabs" id="source-tabs" role="group" aria-label="Source">
+              <button class="ftab active" data-src="ALL" onclick="filterSource('ALL', this)">ALL SOURCES</button>
+              <button class="ftab" data-src="nvd" onclick="filterSource('nvd', this)">NVD</button>
+              <button class="ftab" data-src="kev" onclick="filterSource('kev', this)">KEV</button>
+              <button class="ftab" data-src="github" onclick="filterSource('github', this)">GITHUB</button>
+              <button class="ftab" data-src="paloalto" onclick="filterSource('paloalto', this)">PALOALTO</button>
+              <button class="ftab" data-src="osv" onclick="filterSource('osv', this)">OSV</button>
+              <button class="ftab" data-src="ubuntu" onclick="filterSource('ubuntu', this)">UBUNTU</button>
+              <button class="ftab" data-src="msrc" onclick="filterSource('msrc', this)">MSRC</button>
+              <button class="ftab" data-src="redhat" onclick="filterSource('redhat', this)">REDHAT</button>
             </div>
-            <button id="panel-export-csv-btn" class="export-btn" onclick="exportPanelCSV()" title="Export current view as CSV" style="display:inline-flex">↓ CSV</button>
-            <button id="panel-export-pdf-btn" class="export-btn" onclick="exportPanelPDF()" title="Print / Save as PDF" style="display:inline-flex">↓ PDF</button>
-            <button class="refresh-btn" id="refresh-nvd" onclick="loadNVD()">↻ REFRESH</button>
+            <div class="filter-tabs" role="group" aria-label="Highlights">
+              <button class="ftab" id="toggle-new" aria-pressed="false" onclick="toggleNewOnly()" title="Only entries new since your last visit">★ NEW</button>
+              <button class="ftab" id="toggle-watch" aria-pressed="false" onclick="toggleWatchOnly()" title="Only entries matching your watchlist (Company Profile)">👁 WATCHLIST</button>
+            </div>
           </div>
         </div>
         <div class="cve-scroll" id="cve-feed">
@@ -289,13 +340,14 @@
             <div class="skeleton skel-line skel-long"></div>
           </div>
         </div>
+        <div class="cve-pager" id="cve-pager"></div>
       </div>
 
       <!-- Attack Categories -->
       <div class="panel">
         <div class="panel-header">
           <div class="panel-title">💀 Attack Categories</div>
-          <span class="panel-badge">MITRE ATT&CK</span>
+          <span class="panel-badge" title="Counted by keyword match on CVE descriptions — not MITRE ATT&amp;CK mapping">KEYWORD MATCH</span>
         </div>
         <div class="attack-grid" id="attack-grid">
           <!-- filled by JS -->
@@ -306,6 +358,7 @@
       <div class="panel">
         <div class="panel-header">
           <div class="panel-title">📊 Top Vendors by CVE Count</div>
+          <span class="panel-badge" title="Distro and package-ecosystem feeds (Ubuntu, Red Hat, npm, PyPI…) are not vendors and are left out">EXCL. DISTRO FEEDS</span>
         </div>
         <div class="bar-chart" id="vendor-chart">
           <div class="loading-row">
@@ -328,8 +381,8 @@
       <!-- Emerging Threats (curated reference data — not live CVE counts) -->
       <div class="panel full-width">
         <div class="panel-header">
-          <div class="panel-title">⚠ Emerging Threats</div>
-          <span class="panel-badge" style="color:var(--muted);border-color:var(--border)">CURATED REFERENCE DATA</span>
+          <div class="panel-title">⚠ Threat Themes</div>
+          <span class="panel-badge" style="color:var(--muted);border-color:var(--border)" title="Theme descriptions and sources are curated from 2024 reports; the CVE counts are live keyword matches">CURATED CONTEXT (2024) · LIVE COUNTS</span>
         </div>
         <div class="emerging-grid" id="emerging-grid">
         </div>
@@ -338,7 +391,7 @@
       <!-- Activity Log -->
       <div class="panel full-width">
         <div class="panel-header">
-          <div class="panel-title">📟 Live Activity Log</div>
+          <div class="panel-title">📟 Activity Log</div>
           <span class="panel-badge" id="log-count">0 EVENTS</span>
         </div>
         <div class="log-feed" id="log-feed"></div>
@@ -465,7 +518,7 @@
     <div class="ai-drawer-header">
       <span class="ai-label">⚡ CLAUDE CONSOLE</span>
       <span style="display:flex;align-items:center;gap:8px">
-        <span class="ai-model-badge">claude-sonnet-4-6</span>
+        <span class="ai-model-badge" id="ai-model-badge">claude-sonnet-5-5</span>
         <button class="ai-close" onclick="toggleAiDrawer()" title="Close">✕</button>
       </span>
     </div>
@@ -490,6 +543,7 @@
     </div>
   </aside>
 
+  <script src="js/core.js"></script>
   <script src="js/app.js"></script>
   <script src="js/cloudctl.js"></script>
 
@@ -523,11 +577,28 @@
             <input type="text" id="company-tag-input" class="profile-input" placeholder="e.g. microsoft, apache, cisco..." onkeydown="if(event.key==='Enter'||event.key===','){addTechTag(event);}" style="flex:1">
             <button class="date-go" onclick="addTechTag()">+ ADD</button>
           </div>
-          <div id="company-tags" style="display:flex;flex-wrap:wrap;gap:6px;min-height:32px;margin-bottom:10px"></div>
+          <div id="company-tags" class="tag-list"></div>
           <div>
             <div style="font-size:10px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:6px;letter-spacing:1px">QUICK ADD:</div>
             <div style="display:flex;flex-wrap:wrap;gap:4px" id="company-suggestions"></div>
           </div>
+        </div>
+        <div>
+          <label class="profile-label">WATCHLIST</label>
+          <div class="profile-hint">Vendors or products to highlight with a WATCH badge. Unlike company mode, nothing is hidden.</div>
+          <div style="display:flex;gap:6px;margin-bottom:8px">
+            <input type="text" id="watch-tag-input" class="profile-input" placeholder="e.g. fortinet, citrix, ivanti..." onkeydown="if(event.key==='Enter'||event.key===','){addWatchTag(event);}" style="flex:1">
+            <button class="date-go" onclick="addWatchTag()">+ ADD</button>
+          </div>
+          <div id="watch-tags" class="tag-list"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="profile-label" style="margin-bottom:0" for="notify-toggle">BROWSER ALERTS</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="notify-toggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="profile-hint" style="margin:0">Notify me when a newly exploited (KEV) CVE matches my stack or watchlist</span>
         </div>
         <div>
           <label class="profile-label">IMPORT INVENTORY FILE</label>
@@ -565,6 +636,17 @@
     </div>
   </div>
 
+  <!-- CVE detail panel -->
+  <div class="detail-backdrop" id="detail-backdrop" onclick="closeCveDetail()"></div>
+  <aside class="cve-detail" id="cve-detail" role="dialog" aria-modal="true" aria-labelledby="detail-title" aria-hidden="true">
+    <div class="detail-header">
+      <div class="detail-title" id="detail-title">—</div>
+      <button class="modal-close" onclick="closeCveDetail()" aria-label="Close details">✕</button>
+    </div>
+    <div class="detail-body" id="detail-body"></div>
+  </aside>
+
+  <div id="chart-tip" class="chart-tip" role="tooltip"></div>
   <div id="info-tip-floating"></div>
   <script src="js/main.js"></script>
 </body>

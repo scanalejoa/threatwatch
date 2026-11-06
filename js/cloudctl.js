@@ -19,12 +19,23 @@
 
     const CF_API = 'https://api.cloudflare.com/client/v4';
 
+    // AI model (not a secret, so it lives in localStorage rather than sessionStorage)
+    const AI_MODELS = ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5'];
+    let AI_MODEL = (() => {
+      try { const m = localStorage.getItem('tw_ai_model'); return AI_MODELS.includes(m) ? m : AI_MODELS[0]; } catch { return AI_MODELS[0]; }
+    })();
+    function reflectAiModel() {
+      const badge = document.getElementById('ai-model-badge');
+      if (badge) badge.textContent = AI_MODEL;
+    }
+
     // ── Setup modal ────────────────────────────────────────────
     function openSetup() {
       document.getElementById('cf-token').value = CF_TOKEN;
       document.getElementById('cf-account-id').value = CF_ACCOUNT_ID;
       document.getElementById('anthropic-key').value = ANTHROPIC_KEY;
       document.getElementById('cf-bridge-url').value = CF_BRIDGE_URL;
+      document.getElementById('ai-model').value = AI_MODEL;
       document.getElementById('setup-overlay').classList.add('open');
     }
     function closeSetup() {
@@ -47,6 +58,12 @@
       CF_ACCOUNT_ID = accountId;
       ANTHROPIC_KEY = anthropicKey;
       CF_BRIDGE_URL = bridgeUrl;
+      const model = document.getElementById('ai-model').value;
+      if (AI_MODELS.includes(model)) {
+        AI_MODEL = model;
+        try { localStorage.setItem('tw_ai_model', model); } catch { /* ignore */ }
+        reflectAiModel();
+      }
       sessionStorage.setItem('cf_token', CF_TOKEN);
       sessionStorage.setItem('cf_account_id', CF_ACCOUNT_ID);
       sessionStorage.setItem('anthropic_key', ANTHROPIC_KEY);
@@ -194,9 +211,7 @@
       if (el) el.remove();
     }
 
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-    }
+    // escapeHtml() is defined in js/core.js
 
     // ── AI drawer ──────────────────────────────────────────────
     function toggleAiDrawer() {
@@ -224,6 +239,9 @@
         if (nav) nav.classList.add('active');
       }
       setSuggestionsForView(name);
+      closeSidebar();
+      syncHash();
+      if (name === 'threat-intel') renderTimeline(); // width was 0 while hidden
       // Auto-load CF data when entering a CF view if connected and no body yet
       if (name.startsWith('cf-') && CF_TOKEN && currentZoneId) {
         const sub = name.replace('cf-', '');
@@ -529,7 +547,7 @@
 
     // ── Unified system prompt (joint context: threats + CF) ───
     function buildUnifiedSystem() {
-      const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+      const counts = { critical: 0, high: 0, medium: 0, low: 0, unscored: 0 };
       let kevCount = 0;
       for (const c of allCves) {
         const score = (typeof getCvss === 'function') ? getCvss(c) : 0;
@@ -537,6 +555,7 @@
         else if (score >= 7) counts.high++;
         else if (score >= 4) counts.medium++;
         else if (score > 0) counts.low++;
+        else counts.unscored++;
         if (c._kevExploited) kevCount++;
       }
       const cfStatus = (CF_TOKEN && CF_ACCOUNT_ID) ? `connected (account ${CF_ACCOUNT_ID})` : 'NOT CONNECTED';
@@ -569,7 +588,7 @@ NO EXFILTRATION: Never include CF_TOKEN, ANTHROPIC_KEY, or any sessionStorage va
 
 THREAT INTEL CONTEXT (ThreatWatch):
 - CVEs in active feed: ${allCves.length}
-- Critical: ${counts.critical}, High: ${counts.high}, Medium: ${counts.medium}, Low: ${counts.low}
+- Critical: ${counts.critical}, High: ${counts.high}, Medium: ${counts.medium}, Low: ${counts.low}, Unscored (no CVSS yet): ${counts.unscored}
 - KEV (CISA actively exploited): ${kevCount}
 - Active filters: severity=${currentFilter}, source=${currentSourceFilter}, range=${currentRangeDays}d
 - Company tech stack focus: ${techStack}
@@ -727,8 +746,9 @@ CLOUDFLARE CONTEXT (CLOUDCTL):
             'anthropic-dangerous-direct-browser-access': 'true',
           },
           body: JSON.stringify({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 2048,
+            model: AI_MODEL,
+            // Current models think before answering; 2048 tokens could cut replies off
+            max_tokens: 16000,
             system: buildUnifiedSystem(),
             tools: toolSchemas,
             messages: chatHistory,
@@ -745,6 +765,14 @@ CLOUDFLARE CONTEXT (CLOUDCTL):
           if (block.type === 'text' && block.text.trim()) {
             addChat('assistant', escapeHtml(block.text).replace(/\n/g, '<br>'));
           }
+        }
+        if (data.stop_reason === 'refusal') {
+          addChat('system', 'The model declined this request. Try rephrasing it as a threat-intel or Cloudflare task.');
+          return;
+        }
+        if (data.stop_reason === 'max_tokens') {
+          addChat('system', 'The reply hit the length limit and was cut off. Ask a narrower question.');
+          return;
         }
         if (data.stop_reason !== 'tool_use') return;
         removeThinking();
@@ -969,7 +997,7 @@ CLOUDFLARE CONTEXT (CLOUDCTL):
                 <td style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted)">${escapeHtml((r.content||'').substring(0,50))}</td>
                 <td style="font-size:12px;color:var(--muted)">${r.ttl === 1 ? 'Auto' : r.ttl+'s'}</td>
                 <td><span class="status-badge ${r.proxied ? 'status-proxied' : 'status-dns'}">${r.proxied ? '☁ PROXIED' : 'DNS ONLY'}</span></td>
-                <td><button class="action-btn" onclick="fillCmd('Delete DNS record ${escapeHtml(r.id)} (${escapeHtml(r.name)} ${escapeHtml(r.type)})')">DEL</button></td>
+                <td><button class="action-btn" data-fill-cmd="${escapeHtml(`Delete DNS record ${r.id} (${r.name} ${r.type})`)}">DEL</button></td>
               </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">No records found</td></tr>'}
             </tbody>
           </table>`;
@@ -1071,6 +1099,8 @@ CLOUDFLARE CONTEXT (CLOUDCTL):
       return parts.join(' ').toLowerCase();
     }
 
+    let _lastWafRules = null;
+
     async function renderWafCoverage() {
       const body = document.getElementById('waf-coverage-body');
       if (!body) return;
@@ -1098,6 +1128,7 @@ CLOUDFLARE CONTEXT (CLOUDCTL):
         const r = await CF_TOOLS.list_waf_rules.run({});
         if (!r?.success) throw new Error(r?.errors?.[0]?.message || 'failed to list WAF rules');
         wafRules = r.result || [];
+        _lastWafRules = wafRules; // reused by the CVE detail panel
         document.getElementById('waf-count-badge').textContent = wafRules.length;
       } catch (e) {
         body.innerHTML = `<div class="empty-state" style="color:var(--critical)">Failed to load WAF rules: ${escapeHtml(e.message)}</div>`;
@@ -1152,13 +1183,13 @@ CLOUDFLARE CONTEXT (CLOUDCTL):
             <thead><tr><th>CVE</th><th>SEV</th><th>KEV</th><th>KEYWORDS</th><th>MATCHING WAF RULES</th><th>STATUS</th><th>ACTIONS</th></tr></thead>
             <tbody>${rows.sort((a,b) => (a.matches.length - b.matches.length) || (b.score - a.score)).map(r => `
               <tr class="${r.matches.length === 0 ? 'uncovered' : ''}">
-                <td class="table-mono"><a href="https://nvd.nist.gov/vuln/detail/${escapeHtml(r.id)}" target="_blank" style="color:var(--ai-cyan);text-decoration:none">${escapeHtml(r.id)}</a></td>
+                <td class="table-mono"><a href="${escapeHtml(getCveLink(r.id))}" target="_blank" rel="noopener" style="color:var(--ai-cyan);text-decoration:none">${escapeHtml(r.id)}</a></td>
                 <td style="font-size:11px"><span class="status-badge ${r.sev==='CRITICAL'?'status-blocked':r.sev==='HIGH'?'status-paused':'status-active'}">${r.sev} ${r.score ? r.score.toFixed(1) : ''}</span></td>
                 <td>${r.kev ? '<span class="status-badge status-kev">KEV</span>' : '<span style="color:var(--muted)">—</span>'}</td>
                 <td style="font-size:11px;color:var(--muted)">${r.kws.length ? escapeHtml(r.kws.slice(0,4).join(', ')) : '<em>none extracted</em>'}</td>
                 <td style="font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--muted)">${r.matches.length === 0 ? '<em>none</em>' : escapeHtml(r.matches.slice(0,2).map(m => (m.description || m.filter?.expression || '').substring(0,40)).join(' | '))}${r.matches.length > 2 ? ` +${r.matches.length-2}` : ''}</td>
                 <td><span class="status-badge ${r.matches.length>0?'status-covered':'status-uncovered'}">${r.matches.length>0?'COVERED':'UNCOVERED'}</span></td>
-                <td>${r.matches.length === 0 ? `<button class="action-btn primary" onclick="suggestWafRuleFor('${escapeHtml(r.id)}', ${JSON.stringify(r.kws).replace(/"/g,'&quot;')})">SUGGEST</button>` : ''}</td>
+                <td>${r.matches.length === 0 ? `<button class="action-btn primary" data-suggest-cve="${escapeHtml(r.id)}" data-suggest-kws="${escapeHtml(JSON.stringify(r.kws))}">SUGGEST</button>` : ''}</td>
               </tr>`).join('')}
             </tbody>
           </table>`;
@@ -1177,6 +1208,17 @@ CLOUDFLARE CONTEXT (CLOUDCTL):
 
     // ── CLOUDCTL init wiring ──────────────────────────────────
     (function bootstrapCfIntegration(){
+      reflectAiModel();
+      document.querySelector('.view-area').addEventListener('click', e => {
+        const fill = e.target.closest('[data-fill-cmd]');
+        if (fill) { fillCmd(fill.dataset.fillCmd); return; }
+        const sug = e.target.closest('[data-suggest-cve]');
+        if (sug) {
+          let kws = [];
+          try { kws = JSON.parse(sug.dataset.suggestKws || '[]'); } catch { /* ignore */ }
+          suggestWafRuleFor(sug.dataset.suggestCve, kws);
+        }
+      });
       reflectConnectionState();
       setSuggestionsForView('threat-intel');
       if (loadFromSession()) {
