@@ -1,0 +1,2070 @@
+    // ═══════════════════════════════════════════════════════
+    //  THREATWATCH — Security Dashboard
+    //  Data Sources: NVD (NIST), CISA KEV
+    // ═══════════════════════════════════════════════════════
+
+    let allCves = [];
+    let kevData = [];
+    let currentFilter = 'ALL';
+    let currentSourceFilter = 'ALL';
+    let logCount = 0;
+
+    // ── Company Profile ──────────────────────────────────
+    let companyName = '';
+    let companyTechStack = [];    // array of lowercase keyword strings
+    let companyModeActive = false;
+
+    // ── Live Clock ──────────────────────────────────────
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('live-time').textContent = now.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+    loadCompanyProfile();
+
+    // ── Log feed ────────────────────────────────────────
+    function addLog(type, msg) {
+      const feed = document.getElementById('log-feed');
+      const t = new Date().toISOString().substring(11, 23);
+      const line = document.createElement('div');
+      line.className = 'log-line';
+      const typeClass = { CVE: 'et-cve', KEV: 'et-kev', SYNC: 'et-sync', ALERT: 'et-alert' }[type] || 'et-sync';
+      line.innerHTML = `<span class="time">${t}</span><span class="event-type ${typeClass}">[${type}]</span>${msg}`;
+      feed.insertBefore(line, feed.firstChild);
+      logCount++;
+      document.getElementById('log-count').textContent = `${logCount} EVENTS`;
+      // Keep max 50 lines
+      while (feed.children.length > 50) feed.removeChild(feed.lastChild);
+    }
+
+    // ── Date Range ─────────────────────────────────────────
+    let currentRangeDays = 7;
+
+    let _currentLoadKeyword = '';
+
+    function setRange(days, btn) {
+      const hadKeyword = !!_currentLoadKeyword;
+      currentRangeDays = days;
+      _currentLoadKeyword = '';
+      document.querySelectorAll('.rtab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('custom-dates').classList.remove('visible');
+      // If switching away from a keyword-filtered view, reload external sources so full data is restored.
+      if (hadKeyword) { loadKEV(); loadGitHub(); loadPaloAlto(); loadOSV(); loadUbuntu(); loadMSRC(); loadRedHat(); }
+      loadNVD();
+    }
+
+    function _todayStr() { return new Date().toISOString().split('T')[0]; }
+
+    function _setNvdProgress(pct, done) {
+      const bar   = document.getElementById('nvd-progress-bar');
+      const fill  = document.getElementById('nvd-progress-fill');
+      const label = document.getElementById('nvd-progress-label');
+      if (!bar) return;
+      if (pct === null) {
+        bar.classList.remove('active');
+        fill.style.width = '0%';
+        fill.classList.remove('loading', 'complete');
+        if (label) label.textContent = '';
+        return;
+      }
+      bar.classList.add('active');
+      fill.style.width = pct + '%';
+      if (done) {
+        fill.classList.remove('loading');
+        fill.classList.add('complete');
+        if (label) label.textContent = 'COMPLETE';
+      } else {
+        fill.classList.add('loading');
+        fill.classList.remove('complete');
+        if (label) label.textContent = `LOADING  ${pct}%`;
+      }
+    }
+
+    function toggleCustomRange(btn) {
+      document.querySelectorAll('.rtab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      const cd = document.getElementById('custom-dates');
+      cd.classList.add('visible');
+      // Cap both inputs to today — no future dates
+      const today = _todayStr();
+      document.getElementById('date-start').max = today;
+      document.getElementById('date-end').max = today;
+      // Default to last 30 days
+      const ago = new Date();
+      ago.setDate(ago.getDate() - 30);
+      document.getElementById('date-end').value = today;
+      document.getElementById('date-start').value = ago.toISOString().split('T')[0];
+      checkCustomRangeLength();
+    }
+
+    function checkCustomRangeLength() {
+      const startInput = document.getElementById('date-start');
+      const endInput = document.getElementById('date-end');
+      let startVal = startInput.value;
+      let endVal = endInput.value;
+      const kwRow = document.getElementById('custom-keyword-row');
+      if (!startVal || !endVal) { kwRow.classList.remove('visible'); return; }
+      // Clamp end date to today if user typed a future date
+      const today = _todayStr();
+      if (endVal > today) { endInput.value = today; endVal = today; }
+      if (startVal > today) { startInput.value = today; startVal = today; }
+      const diffDays = (new Date(endVal) - new Date(startVal)) / (1000 * 60 * 60 * 24);
+      if (diffDays > 90) {
+        kwRow.classList.add('visible');
+        document.getElementById('load-btn-dates').style.display = 'none';
+        document.getElementById('load-btn-kw').style.display = '';
+      } else {
+        kwRow.classList.remove('visible');
+        document.getElementById('custom-keyword').value = '';
+        document.getElementById('load-btn-dates').style.display = '';
+        document.getElementById('load-btn-kw').style.display = 'none';
+      }
+    }
+
+    function loadCustomRange() {
+      const startVal = document.getElementById('date-start').value;
+      const endVal = document.getElementById('date-end').value;
+      if (!startVal || !endVal) return;
+
+      const diffDays = (new Date(endVal) - new Date(startVal)) / (1000 * 60 * 60 * 24);
+
+      if (diffDays > 90) {
+        const kw = document.getElementById('custom-keyword').value.trim();
+        if (!kw) {
+          const inp = document.getElementById('custom-keyword');
+          inp.classList.add('error');
+          inp.focus();
+          setTimeout(() => inp.classList.remove('error'), 600);
+          return;
+        }
+        _currentLoadKeyword = kw;
+      } else {
+        _currentLoadKeyword = '';
+      }
+
+      currentRangeDays = -1;
+      loadNVD(new Date(startVal), new Date(endVal + 'T23:59:59')).then(() => {
+        loadKEV(); loadGitHub(); loadPaloAlto(); loadOSV(); loadUbuntu(); loadMSRC(); loadRedHat();
+      });
+    }
+
+    // ── NVD API ──────────────────────────────────────────
+    let _nvdCancelFlag = false;
+    const NVD_PER_PAGE = 2000;
+    const NVD_RATE_DELAY_MS = 6500; // 5 req/30s → ~6s between requests
+    const NVD_MAX_PAGES = 50;       // safety cap: 50 pages = 100K CVEs max
+
+    async function loadNVD(customStart, customEnd) {
+      // Cancel any in-progress load
+      _nvdCancelFlag = true;
+      await new Promise(r => setTimeout(r, 100));
+      _nvdCancelFlag = false;
+
+      const btn = document.getElementById('refresh-nvd');
+      btn.disabled = false;
+      btn.textContent = '⏹ CANCEL';
+      btn.onclick = () => { _nvdCancelFlag = true; };
+      document.getElementById('sync-status').textContent = 'SYNCING NVD...';
+      document.getElementById('sync-status').style.color = 'var(--warn)';
+      _setNvdProgress(0);
+
+      // For auto-refresh when a custom range is active, re-read the date inputs and keyword
+      if (!customStart && currentRangeDays === -1) {
+        const startVal = document.getElementById('date-start').value;
+        const endVal = document.getElementById('date-end').value;
+        if (startVal && endVal) {
+          customStart = new Date(startVal);
+          customEnd = new Date(endVal + 'T23:59:59');
+          // Recover keyword for long ranges
+          if (!_currentLoadKeyword) {
+            _currentLoadKeyword = document.getElementById('custom-keyword').value.trim();
+          }
+        } else {
+          currentRangeDays = 7;
+        }
+      }
+
+      const endDate = customEnd || new Date();
+      const startDate = customStart || new Date();
+      if (!customStart) startDate.setDate(endDate.getDate() - currentRangeDays);
+
+      const rangeLabel = customStart
+        ? `${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}${_currentLoadKeyword ? ` [${_currentLoadKeyword}]` : ''}`
+        : `last ${currentRangeDays} days`;
+
+      addLog('SYNC', `Fetching NVD data (${rangeLabel})...`);
+      document.getElementById('range-info').textContent = `Loading ${rangeLabel}...`;
+
+      try {
+        // Pre-filter external source entries when a keyword is active.
+        // Removes unrelated KEV/GitHub/PaloAlto entries that were loaded without a keyword at page init.
+        if (_currentLoadKeyword) {
+          const kw = _currentLoadKeyword.toLowerCase();
+          allCves = allCves.filter(v => {
+            if (v._source === 'nvd') return false;
+            const id = (v.cve.id || '').toLowerCase();
+            const desc = (v.cve.descriptions?.find(d => d.lang === 'en')?.value || '').toLowerCase();
+            const vendor = getVendor(v).toLowerCase();
+            return id.includes(kw) || desc.includes(kw) || vendor.includes(kw);
+          });
+          renderCves(); renderStats(); renderVendorChart(); renderDonut();
+ renderAttackGrid();
+ renderEmergingThreats();
+        }
+
+        // CVE ID direct lookup — bypasses chunking, date range, and keyword search entirely.
+        // Accepts "CVE-2021-23017", "cve-2021-23017", or bare "2021-23017".
+        const cveIdMatch = _currentLoadKeyword && _currentLoadKeyword.match(/^(?:CVE-)?(\d{4}-\d+)$/i);
+        if (cveIdMatch) {
+          const cveId = `CVE-${cveIdMatch[1].toUpperCase()}`;
+          addLog('SYNC', `CVE ID detected — direct lookup: ${cveId}`);
+          document.getElementById('range-info').textContent = `Looking up ${cveId}...`;
+          const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${encodeURIComponent(cveId)}`;
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          const found = (data.vulnerabilities || []).map(v => ({ ...v, _source: 'nvd' }));
+          const externalCves = allCves.filter(v => v._source && v._source !== 'nvd');
+          allCves = [...found, ...externalCves];
+          if (found.length > 0) {
+            const score = getCvss(found[0]);
+            addLog('CVE', `${cveId} — CVSS ${score > 0 ? score : 'N/A'} (${getSeverity(score)})`);
+            document.getElementById('range-info').textContent = `${cveId} — CVSS ${score > 0 ? score : 'N/A'}`;
+            document.getElementById('sync-status').textContent = '✓ NVD SYNCED';
+            document.getElementById('sync-status').style.color = 'var(--low)';
+            setSourceStatus('nvd', true, 1);
+          } else {
+            addLog('ALERT', `${cveId} not found in NVD`);
+            document.getElementById('range-info').textContent = `${cveId} not found in NVD`;
+            document.getElementById('sync-status').textContent = 'NOT FOUND';
+            document.getElementById('sync-status').style.color = 'var(--warn)';
+            setSourceStatus('nvd', false);
+          }
+          renderCves(); renderStats(); renderVendorChart(); renderDonut();
+ renderAttackGrid();
+ renderEmergingThreats();
+          _setNvdProgress(100, found.length > 0);
+          return;
+        }
+
+        // NVD API enforces a 120-day maximum date range per request.
+        // Split larger ranges into sequential 119-day chunks.
+        const NVD_CHUNK_DAYS = 119;
+        const chunks = [];
+        let cs = new Date(startDate);
+        while (cs <= endDate) {
+          const ce = new Date(cs);
+          ce.setDate(ce.getDate() + NVD_CHUNK_DAYS);
+          chunks.push({
+            start: cs.toISOString().split('.')[0] + '.000',
+            end: (ce > endDate ? endDate : ce).toISOString().split('.')[0] + '.000'
+          });
+          cs = new Date(ce);
+          cs.setDate(cs.getDate() + 1);
+        }
+        if (chunks.length > 1) {
+          addLog('SYNC', `Date range split into ${chunks.length} chunks (NVD API max: 120 days/request)`);
+        }
+
+        let allNvdResults = [];
+        let grandTotal = 0;
+        let isFirstRequest = true;
+
+        for (let ci = 0; ci < chunks.length; ci++) {
+          if (_nvdCancelFlag) {
+            addLog('SYNC', `NVD load cancelled after ${allNvdResults.length} CVEs`);
+            break;
+          }
+
+          const chunk = chunks[ci];
+          const kwParam = _currentLoadKeyword ? `&keywordSearch=${encodeURIComponent(_currentLoadKeyword)}&keywordExactMatch` : '';
+          const baseUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?pubStartDate=${chunk.start}&pubEndDate=${chunk.end}${kwParam}&resultsPerPage=${NVD_PER_PAGE}`;
+          const chunkLabel = chunks.length > 1 ? `Chunk ${ci + 1}/${chunks.length} · ` : '';
+
+          let startIndex = 0;
+          let totalResults = null;
+          let page = 0;
+
+          while (true) {
+            if (_nvdCancelFlag) {
+              addLog('SYNC', `NVD load cancelled after ${allNvdResults.length} CVEs`);
+              break;
+            }
+
+            // Rate limit: delay before every request except the very first
+            if (!isFirstRequest) {
+              addLog('SYNC', `Rate limit pause (${(NVD_RATE_DELAY_MS / 1000).toFixed(1)}s)...`);
+              await new Promise(r => setTimeout(r, NVD_RATE_DELAY_MS));
+            }
+            isFirstRequest = false;
+
+            const url = `${baseUrl}&startIndex=${startIndex}`;
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+
+            if (totalResults === null) {
+              totalResults = data.totalResults || 0;
+              grandTotal += totalResults;
+              const totalPages = Math.min(Math.ceil(totalResults / NVD_PER_PAGE), NVD_MAX_PAGES);
+              addLog('SYNC', `${chunkLabel}${totalResults.toLocaleString()} CVEs found — fetching ${totalPages} page(s)`);
+            }
+
+            const batch = (data.vulnerabilities || []).filter(v => {
+              const desc = v.cve?.descriptions?.find(d => d.lang === 'en')?.value || '';
+              return !desc.startsWith('** REJECT') && !desc.startsWith('Rejected reason:');
+            }).map(v => ({ ...v, _source: 'nvd' }));
+            allNvdResults = [...allNvdResults, ...batch];
+            page++;
+
+            const totalPages = Math.min(Math.ceil((totalResults || 0) / NVD_PER_PAGE), NVD_MAX_PAGES);
+            // Global progress: (chunks done + fraction of current chunk) / total chunks
+            const globalPct = Math.round(((ci + (totalPages > 0 ? page / totalPages : 1)) / chunks.length) * 100);
+            document.getElementById('range-info').textContent = `${chunkLabel}Page ${page}/${totalPages} · ${allNvdResults.length.toLocaleString()} CVEs loaded`;
+            btn.textContent = 'SEARCHING';
+            _setNvdProgress(globalPct);
+
+            // Update the display incrementally every page
+            const externalCves = allCves.filter(v => v._source && v._source !== 'nvd');
+            allCves = [...allNvdResults, ...externalCves];
+            renderCves();
+            renderStats();
+            renderVendorChart();
+            renderDonut();
+            renderAttackGrid();
+            renderEmergingThreats();
+
+            startIndex += NVD_PER_PAGE;
+            if (startIndex >= (totalResults || 0) || page >= NVD_MAX_PAGES) break;
+            if (batch.length === 0) break;
+          }
+        }
+
+        // Final state
+        const externalCves = allCves.filter(v => v._source && v._source !== 'nvd');
+        allCves = [...allNvdResults, ...externalCves];
+        const loaded = allNvdResults.length;
+
+        // Retroactively enrich KEV entries: copy real NVD CVSS into any KEV entries now in allCves
+        const nvdById = {};
+        allNvdResults.forEach(v => { nvdById[v.cve.id] = v; });
+        allCves.forEach(v => {
+          if (v._source === 'kev' && v._kevExploited) {
+            const nvdMatch = nvdById[v.cve.id];
+            if (nvdMatch && nvdMatch.cve.metrics && Object.keys(nvdMatch.cve.metrics).length > 0) {
+              v.cve.metrics = nvdMatch.cve.metrics;
+            }
+          }
+        });
+
+        if (_nvdCancelFlag) {
+          document.getElementById('sync-status').textContent = `⏹ CANCELLED (${loaded.toLocaleString()})`;
+          document.getElementById('sync-status').style.color = 'var(--warn)';
+          _setNvdProgress(null);
+        } else {
+          addLog('SYNC', `NVD sync complete — ${loaded.toLocaleString()} CVEs loaded (${rangeLabel})`);
+          addLog('CVE', `Highest CVSS: ${getTopCvss(allCves)}`);
+          document.getElementById('sync-status').textContent = '✓ NVD SYNCED';
+          document.getElementById('sync-status').style.color = 'var(--low)';
+          _setNvdProgress(100, true);
+        }
+        document.getElementById('range-info').textContent = `${loaded.toLocaleString()} NVD + ${externalCves.length} external = ${allCves.length.toLocaleString()} total (${rangeLabel})`;
+
+        renderCves();
+        renderStats();
+        renderVendorChart();
+        renderDonut();
+        renderAttackGrid();
+        renderEmergingThreats();
+        setSourceStatus('nvd', true, loaded);
+      } catch (e) {
+        _setNvdProgress(null);
+        setSourceStatus('nvd', false);
+        if (_currentLoadKeyword) {
+          // Keyword-filtered load — don't inject demo data; it would show unrelated fake CVEs.
+          // Clear any partial NVD results accumulated before the error.
+          allCves = allCves.filter(v => v._source !== 'nvd');
+          addLog('ALERT', `NVD API error: ${e.message}`);
+          document.getElementById('sync-status').textContent = 'NVD OFFLINE';
+          document.getElementById('sync-status').style.color = 'var(--warn)';
+          document.getElementById('range-info').textContent = 'NVD offline — external results only';
+          renderCves(); renderStats(); renderVendorChart(); renderDonut();
+ renderAttackGrid();
+ renderEmergingThreats();
+        } else {
+          addLog('ALERT', `NVD API error: ${e.message} — Loading demo data`);
+          document.getElementById('sync-status').textContent = 'DEMO MODE';
+          document.getElementById('sync-status').style.color = 'var(--warn)';
+          document.getElementById('range-info').textContent = 'DEMO MODE';
+          loadDemoData();
+        }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '↻ REFRESH';
+        btn.onclick = () => loadNVD();
+      }
+    }
+
+    function getTopCvss(cves) {
+      let top = 0, topId = '';
+      cves.forEach(v => {
+        const score = getCvss(v);
+        if (score > top) { top = score; topId = v.cve.id; }
+      });
+      return `${topId} (${top})`;
+    }
+
+    // ── CISA KEV ────────────────────────────────────────────
+    async function loadKEV() {
+      addLog('SYNC', 'Fetching CISA Known Exploited Vulnerabilities catalog...');
+      try {
+        const kevUrl = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
+        const resp = await fetch(proxyUrl(kevUrl));
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        // Use the dashboard's current date range (standard or custom)
+        let kevCutoff;
+        if (currentRangeDays === -1) {
+          const startVal = document.getElementById('date-start').value;
+          kevCutoff = startVal ? new Date(startVal) : new Date();
+          if (!startVal) kevCutoff.setFullYear(kevCutoff.getFullYear() - 3);
+        } else {
+          kevCutoff = new Date();
+          kevCutoff.setDate(kevCutoff.getDate() - currentRangeDays);
+        }
+        kevData = (data.vulnerabilities || []).filter(v => {
+          const d = new Date(v.dateAdded || '');
+          return !isNaN(d) && d >= kevCutoff;
+        });
+
+        // Convert KEV entries to NVD-like objects and merge into allCves
+        const kevCves = kevData.map(k => ({
+          _source: 'kev',
+          _kevExploited: true,
+          cve: {
+            id: k.cveID,
+            published: k.dateAdded || '',
+            descriptions: [{ lang: 'en', value: k.vulnerabilityName || k.shortDescription || 'Known exploited vulnerability' }],
+            metrics: {},
+            configurations: k.vendorProject ? [{
+              nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:${k.vendorProject.toLowerCase().replace(/[^a-z0-9]/g, '_')}:${(k.product || '').toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
+            }] : []
+          }
+        }));
+
+        // Cross-reference: mark existing allCves entries as _kevExploited + copy CVSS into KEV entries
+        const kevIds = new Set(kevData.map(k => k.cveID));
+        const nvdLookup = {};
+        allCves.forEach(v => {
+          if (kevIds.has(v.cve.id)) {
+            v._kevExploited = true;
+            nvdLookup[v.cve.id] = v;
+          }
+        });
+        // Inherit CVSS metrics from NVD for KEV entries that have a match; default CRITICAL when unknown
+        kevCves.forEach(kv => {
+          const nvdMatch = nvdLookup[kv.cve.id];
+          if (nvdMatch && nvdMatch.cve.metrics) {
+            kv.cve.metrics = nvdMatch.cve.metrics;
+          }
+        });
+
+        mergeExternalCves(kevCves);
+        document.getElementById('cnt-kev').textContent = kevData.length;
+        addLog('KEV', `CISA KEV loaded — ${kevData.length} known exploited CVEs (last 3 years)`);
+        setSourceStatus('kev', true, kevData.length);
+      } catch (e) {
+        addLog('ALERT', `CISA KEV fetch error: ${e.message} — Using sample data`);
+        loadKevDemo();
+        setSourceStatus('kev', false);
+      }
+    }
+
+    // ── Source Status Helper ──────────────────────────────
+    function setSourceStatus(src, ok, count) {
+      const el = document.getElementById(`src-${src}`);
+      if (!el) return;
+      el.classList.remove('ok', 'fail');
+      el.classList.add(ok ? 'ok' : 'fail');
+      if (count !== undefined) {
+        // Update count in pill text (after the dot span)
+        el.childNodes[1].textContent = el.childNodes[1].textContent.split('—')[0].trimEnd() + (ok ? ` — ${count}` : ' — ERR');
+      }
+    }
+
+    // ── CORS Proxy URL ───────────────────────────────
+    // ❗ Update this with YOUR worker URL after deploying cors-proxy/worker.js
+    const CORS_PROXY = 'https://threatwatch-cors-proxy.scanalejoa.workers.dev';
+    function proxyUrl(target) {
+      return `${CORS_PROXY}?url=${encodeURIComponent(target)}`;
+    }
+
+    // ── GitHub Security Advisories ─────────────────────────
+    let githubCves = [];
+    async function loadGitHub() {
+      addLog('SYNC', 'Fetching GitHub Security Advisories...');
+      try {
+        // GitHub public advisories API — no auth needed, CORS-friendly
+        const resp = await fetch('https://api.github.com/advisories?per_page=100&type=reviewed', {
+          headers: { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        // Normalize to NVD-like structure for seamless merging
+        // Filter to last 3 years for actionable threat intelligence
+        const ghCutoff = new Date();
+        ghCutoff.setFullYear(ghCutoff.getFullYear() - 3);
+        githubCves = data
+          .filter(a => {
+            if (!a.cve_id) return false;
+            const d = new Date(a.published_at || '');
+            return !isNaN(d) && d >= ghCutoff;
+          })
+          .map(a => ({
+            _source: 'github',
+            cve: {
+              id: a.cve_id,
+              published: a.published_at,
+              descriptions: [{ lang: 'en', value: a.description || a.summary || 'No description' }],
+              metrics: a.cvss ? {
+                cvssMetricV31: [{ cvssData: { baseScore: a.cvss.score || 0 } }]
+              } : {},
+              configurations: a.vulnerabilities?.map(v => ({
+                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:${v.package?.ecosystem?.toLowerCase() || 'unknown'}:${v.package?.name?.toLowerCase() || 'unknown'}:*:*:*` }] }]
+              })) || []
+            }
+          }));
+
+        addLog('CVE', `GitHub Advisories loaded — ${githubCves.length} CVEs`);
+        setSourceStatus('github', true, githubCves.length);
+
+        // Merge into allCves (avoid duplicates)
+        mergeExternalCves(githubCves);
+      } catch (e) {
+        addLog('ALERT', `GitHub Advisories error: ${e.message}`);
+        setSourceStatus('github', false);
+      }
+    }
+
+    // ── Red Hat Security Data API ───────────────────────────
+    async function loadRedHat() {
+      addLog('SYNC', 'Fetching Red Hat Security advisories...');
+      try {
+        const after = new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0];
+        // Correct endpoint: /hydra/rest/securitydata/ (the old /labs/securitydataapi/ path is 404)
+        const url = `https://access.redhat.com/hydra/rest/securitydata/cve.json?after=${after}&per_page=100`;
+        // Try direct first — Red Hat Security Data API supports CORS
+        let resp;
+        try {
+          resp = await fetch(url, { headers: { Accept: 'application/json' } });
+          if (!resp.ok) throw new Error('direct failed');
+        } catch {
+          resp = await fetch(proxyUrl(url));
+        }
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        // API returns an array of CVE summary objects.
+        // Top-level fields: CVE, severity, public_date, cvss3_score, cvss_score,
+        //                   bugzilla_description, affected_packages
+        const cves = (Array.isArray(data) ? data : [])
+          .filter(c => c.CVE && /^CVE-/i.test(c.CVE))
+          .map(c => {
+            const score = parseFloat(c.cvss3_score || c.cvss_score || 0);
+            const desc = c.bugzilla_description || 'No description';
+            return {
+              _source: 'redhat',
+              cve: {
+                id: c.CVE,
+                published: c.public_date || '',
+                descriptions: [{ lang: 'en', value: desc }],
+                metrics: score > 0 ? { cvssMetricV31: [{ cvssData: { baseScore: score } }] } : {},
+                configurations: (c.affected_packages || []).slice(0, 3).map(pkg => ({
+                  nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:redhat:${pkg.toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
+                })),
+              },
+            };
+          });
+
+        setSourceStatus('redhat', true, cves.length);
+        addLog('CVE', `Red Hat Security loaded — ${cves.length} CVEs`);
+        mergeExternalCves(cves);
+      } catch (e) {
+        addLog('ALERT', `Red Hat Security error: ${e.message}`);
+        setSourceStatus('redhat', false);
+      }
+    }
+
+    // ── Palo Alto PSIRT (direct JSON API) ─────────────────
+    async function loadPaloAlto() {
+      addLog('SYNC', 'Fetching Palo Alto PSIRT advisories...');
+      try {
+        // security.paloaltonetworks.com/json is CORS-friendly — try direct first
+        const url = 'https://security.paloaltonetworks.com/json';
+        let resp;
+        try {
+          resp = await fetch(url, { headers: { Accept: 'application/json' } });
+          if (!resp.ok) throw new Error('direct failed');
+        } catch {
+          resp = await fetch(proxyUrl(url));
+        }
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        // API returns array with CVE-* and PAN-SA-* entries.
+        // Include both: CVE-* are standard CVEs, PAN-SA-* are Palo Alto security advisories.
+        // Filter to last 3 years to exclude ancient/deferred entries.
+        const advisories = Array.isArray(data) ? data : [];
+        const threeYearsAgo = new Date();
+        threeYearsAgo.setFullYear(threeYearsAgo.getFullYear() - 3);
+        const cves = advisories
+          .filter(a => {
+            if (!/^(CVE-\d|PAN-SA-)/i.test(a.ID || '')) return false;
+            const d = new Date(a.date || a.updated || '');
+            return !isNaN(d) && d >= threeYearsAgo;
+          })
+          .map(a => ({
+            _source: 'paloalto',
+            cve: {
+              id: a.ID.toUpperCase(),
+              published: a.date || a.updated || '',
+              descriptions: [{ lang: 'en', value: a.title || 'No description' }],
+              metrics: a.baseScore ? {
+                cvssMetricV31: [{ cvssData: { baseScore: parseFloat(a.baseScore) || 0 } }]
+              } : {},
+              configurations: (Array.isArray(a.product) ? a.product : []).map(p => ({
+                nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:paloaltonetworks:${p.toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
+              }))
+            }
+          }));
+
+        setSourceStatus('paloalto', true, cves.length);
+        addLog('CVE', `Palo Alto PSIRT loaded — ${cves.length} advisories (CVEs + PAN-SA)`);
+        mergeExternalCves(cves);
+      } catch (e) {
+        addLog('ALERT', `Palo Alto PSIRT error: ${e.message}`);
+        setSourceStatus('paloalto', false);
+      }
+    }
+
+    // ── OWASP API Top 10 Classifier (client-side) ──────────
+    // Enriches existing CVEs with OWASP API Security Top 10 categories (2023)
+    // based on description keyword matching — no API calls.
+    function classifyOwaspApi(vuln) {
+      const desc = (vuln.cve.descriptions?.find(d => d.lang === 'en')?.value || '').toLowerCase();
+      if (!desc) return null;
+      // Only classify if the vuln looks API-related
+      if (!/\bapi\b|rest(ful)?|graphql|oauth|jwt|json.web.token|openapi|swagger|endpoint|ssrf/.test(desc)) return null;
+      if (/\bidor\b|object.level.auth|broken.object.level|bola\b/.test(desc))           return 'API1';
+      if (/broken.auth|auth.*bypass|jwt\b|json.web.token|oauth\b|bearer.token|session.fix|credential.stuff/.test(desc)) return 'API2';
+      if (/mass.assign|over.post|excess.*data.expos|property.level.auth/.test(desc))   return 'API3';
+      if (/rate.limit|throttl|resource.*exhaust|unrestricted.*resource|dos\b|denial.of.service/.test(desc)) return 'API4';
+      if (/function.level.auth|privilege.escal|admin.*endpoint|unauthorized.*function/.test(desc)) return 'API5';
+      if (/business.logic|workflow.*bypass|purchase.*manipul|inventory.*manipul/.test(desc)) return 'API6';
+      if (/\bssrf\b|server.side.request.forgery/.test(desc))                            return 'API7';
+      if (/misconfigur|default.cred|cors.*misconfig|security.header|tls.*misconfig/.test(desc)) return 'API8';
+      if (/undocumented.api|deprecated.endpoint|shadow.api|unknown.*endpoint/.test(desc)) return 'API9';
+      if (/third.party.api|upstream.*service|supply.chain.*api|api.*trust/.test(desc)) return 'API10';
+      return null;
+    }
+
+    // ── OSV (Open Source Vulnerabilities) ──────────────────
+    async function loadOSV() {
+      addLog('SYNC', 'Fetching OSV supply chain advisories...');
+      try {
+        // Query OSV batch for popular open-source packages across ecosystems
+        const popularPackages = [
+          { name: 'express',                               ecosystem: 'npm' },
+          { name: 'lodash',                                ecosystem: 'npm' },
+          { name: 'axios',                                 ecosystem: 'npm' },
+          { name: 'minimist',                              ecosystem: 'npm' },
+          { name: 'node-fetch',                            ecosystem: 'npm' },
+          { name: 'vm2',                                   ecosystem: 'npm' },
+          { name: 'got',                                   ecosystem: 'npm' },
+          { name: 'semver',                                ecosystem: 'npm' },
+          { name: 'django',                                ecosystem: 'PyPI' },
+          { name: 'flask',                                 ecosystem: 'PyPI' },
+          { name: 'requests',                              ecosystem: 'PyPI' },
+          { name: 'Pillow',                                ecosystem: 'PyPI' },
+          { name: 'cryptography',                          ecosystem: 'PyPI' },
+          { name: 'PyYAML',                                ecosystem: 'PyPI' },
+          { name: 'paramiko',                              ecosystem: 'PyPI' },
+          { name: 'Jinja2',                                ecosystem: 'PyPI' },
+          { name: 'github.com/gin-gonic/gin',              ecosystem: 'Go' },
+          { name: 'github.com/opencontainers/runc',        ecosystem: 'Go' },
+          { name: 'github.com/containerd/containerd',      ecosystem: 'Go' },
+          { name: 'org.springframework:spring-core',       ecosystem: 'Maven' },
+          { name: 'org.apache.logging.log4j:log4j-core',  ecosystem: 'Maven' },
+          { name: 'org.apache.struts:struts2-core',        ecosystem: 'Maven' },
+          { name: 'rails',                                 ecosystem: 'RubyGems' },
+          { name: 'nokogiri',                              ecosystem: 'RubyGems' },
+          { name: 'openssl',                               ecosystem: 'crates.io' },
+          { name: 'hyper',                                 ecosystem: 'crates.io' },
+        ];
+        const osvBody = JSON.stringify({ queries: popularPackages.map(p => ({ package: p })) });
+        const osvFetchOpts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: osvBody };
+        // Try direct CORS first; fall back to proxy if browser blocks the cross-origin POST
+        let resp;
+        try {
+          resp = await fetch('https://api.osv.dev/v1/querybatch', osvFetchOpts);
+          if (!resp.ok) throw new Error('direct failed');
+        } catch {
+          resp = await fetch(proxyUrl('https://api.osv.dev/v1/querybatch'), osvFetchOpts);
+        }
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        const seenIds = new Set();
+        const osvCves = [];
+        (data.results || []).forEach(result => {
+          (result.vulns || []).forEach(vuln => {
+            if (seenIds.has(vuln.id)) return;
+            seenIds.add(vuln.id);
+            // Prefer CVE alias; fall back to OSV ID (GHSA-xxx / PYSEC-xxx etc.)
+            const cveId = (vuln.aliases || []).find(a => /^CVE-/i.test(a)) || vuln.id;
+            if (!cveId) return;
+            const affectedPkg = vuln.affected?.[0]?.package;
+            // Parse base score from severity vector or database_specific
+            let baseScore = 0;
+            if (vuln.severity && Array.isArray(vuln.severity)) {
+              for (const sev of vuln.severity) {
+                const m = (sev.score || '').match(/\/(\d+(?:\.\d+)?)$/);
+                if (m) { baseScore = parseFloat(m[1]); break; }
+              }
+            }
+            if (!baseScore && vuln.database_specific?.cvss_score) {
+              baseScore = parseFloat(vuln.database_specific.cvss_score) || 0;
+            }
+            if (!baseScore && vuln.database_specific?.severity) {
+              const s = vuln.database_specific.severity.toUpperCase();
+              baseScore = s === 'CRITICAL' ? 9.5 : s === 'HIGH' ? 7.5 : s === 'MODERATE' || s === 'MEDIUM' ? 5.5 : s === 'LOW' ? 2.5 : 0;
+            }
+            osvCves.push({
+              _source: 'osv',
+              cve: {
+                id: cveId,
+                published: vuln.published || vuln.modified || '',
+                descriptions: [{ lang: 'en', value: vuln.details || vuln.summary || 'No description' }],
+                metrics: baseScore > 0 ? { cvssMetricV31: [{ cvssData: { baseScore } }] } : {},
+                configurations: affectedPkg ? [{
+                  nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:${(affectedPkg.ecosystem || 'unknown').toLowerCase()}:${(affectedPkg.name || 'unknown').toLowerCase()}:*:*:*` }] }]
+                }] : [],
+              },
+            });
+          });
+        });
+
+        setSourceStatus('osv', true, osvCves.length);
+        addLog('CVE', `OSV supply chain advisories loaded — ${osvCves.length} entries`);
+        mergeExternalCves(osvCves);
+      } catch (e) {
+        addLog('ALERT', `OSV error: ${e.constructor.name}: ${e.message}`);
+        setSourceStatus('osv', false);
+      }
+    }
+
+    // ── Ubuntu Security Notices ────────────────────────────
+    async function loadUbuntu() {
+      addLog('SYNC', 'Fetching Ubuntu Security Notices...');
+      try {
+        // Ubuntu API max limit is 20 — fetch 4 pages (80 notices total)
+        const allNotices = [];
+        for (let page = 0; page < 4; page++) {
+          const url = `https://ubuntu.com/security/notices.json?limit=20&offset=${page * 20}`;
+          let resp;
+          try {
+            resp = await fetch(url);
+            if (!resp.ok) throw new Error('direct failed');
+          } catch {
+            resp = await fetch(proxyUrl(url));
+          }
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          const page_notices = data.notices || data.results || [];
+          allNotices.push(...page_notices);
+          if (page_notices.length < 20) break; // last page
+        }
+
+        const notices = allNotices;
+        const seenCves = new Set();
+        const cves = [];
+        for (const notice of notices) {
+          // Ubuntu notices have no dedicated cves[] field — CVE IDs appear in description text
+          const text = (notice.description || '') + ' ' + (notice.summary || '');
+          const cveMatches = text.match(/CVE-\d{4}-\d+/g) || [];
+          for (const cveId of cveMatches) {
+            if (seenCves.has(cveId)) continue;
+            seenCves.add(cveId);
+            cves.push({
+              _source: 'ubuntu',
+              cve: {
+                id: cveId,
+                published: notice.published || '',
+                descriptions: [{ lang: 'en', value: notice.title || notice.summary || 'No description' }],
+                metrics: {},
+                configurations: Object.keys(notice.release_packages || {}).slice(0, 1).flatMap(rel =>
+                  (notice.release_packages[rel] || []).filter(p => p.is_source && p.name).slice(0, 2).map(p => ({
+                    nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:ubuntu:${p.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
+                  }))
+                ),
+              },
+            });
+          }
+        }
+
+        setSourceStatus('ubuntu', true, cves.length);
+        addLog('CVE', `Ubuntu Security loaded — ${cves.length} CVEs`);
+        mergeExternalCves(cves);
+      } catch (e) {
+        addLog('ALERT', `Ubuntu Security error: ${e.constructor.name}: ${e.message}`);
+        setSourceStatus('ubuntu', false);
+      }
+    }
+
+    // ── Microsoft MSRC (Security Update Guide) ────────────
+    async function loadMSRC() {
+      addLog('SYNC', 'Fetching Microsoft MSRC advisories...');
+      try {
+        // Step 1: list available CVRF documents
+        const updatesResp = await fetch(proxyUrl('https://api.msrc.microsoft.com/cvrf/v3.0/Updates'));
+        if (!updatesResp.ok) throw new Error(`HTTP ${updatesResp.status}`);
+        const updatesData = await updatesResp.json();
+        const updates = (updatesData.value || []).sort((a, b) =>
+          new Date(b.CurrentReleaseDate || 0) - new Date(a.CurrentReleaseDate || 0)
+        );
+        if (!updates.length) throw new Error('No MSRC updates found');
+
+        // Step 2: fetch the most recent monthly CVRF
+        const latest = updates[0];
+        const cvrfResp = await fetch(proxyUrl(`https://api.msrc.microsoft.com/cvrf/v3.0/cvrf/${latest.ID}`));
+        if (!cvrfResp.ok) throw new Error(`HTTP ${cvrfResp.status}`);
+        const cvrf = await cvrfResp.json();
+
+        const cves = (cvrf.Vulnerability || [])
+          .filter(v => v.CVE && /^CVE-/i.test(v.CVE))
+          .map(v => {
+            const score = parseFloat(v.CVSSScoreSets?.[0]?.BaseScore || 0);
+            const desc = v.Notes?.find(n => n.Type === 1 || n.Type === 'Description')?.Value
+              || v.Title?.Value || 'No description';
+            return {
+              _source: 'msrc',
+              cve: {
+                id: v.CVE,
+                published: v.RevisionHistory?.[v.RevisionHistory.length - 1]?.Date
+                  || latest.CurrentReleaseDate || '',
+                descriptions: [{ lang: 'en', value: desc }],
+                metrics: score > 0 ? { cvssMetricV31: [{ cvssData: { baseScore: score } }] } : {},
+                configurations: [],
+              },
+            };
+          });
+
+        setSourceStatus('msrc', true, cves.length);
+        addLog('CVE', `MSRC loaded — ${cves.length} CVEs (${latest.ID})`);
+        mergeExternalCves(cves);
+      } catch (e) {
+        addLog('ALERT', `MSRC error: ${e.message}`);
+        setSourceStatus('msrc', false);
+      }
+    }
+
+    // ── Merge external CVEs into allCves ───────────────────
+    function mergeExternalCves(incoming) {
+      const existing = new Set(allCves.map(v => v.cve.id));
+      let newOnes = incoming.filter(v => !existing.has(v.cve.id));
+      // When a keyword filter is active (long custom range), apply it to external sources too
+      if (_currentLoadKeyword) {
+        const kw = _currentLoadKeyword.toLowerCase();
+        newOnes = newOnes.filter(v => {
+          const id = (v.cve.id || '').toLowerCase();
+          const desc = (v.cve.descriptions?.find(d => d.lang === 'en')?.value || '').toLowerCase();
+          const vendor = getVendor(v).toLowerCase();
+          return id.includes(kw) || desc.includes(kw) || vendor.includes(kw);
+        });
+      }
+      if (newOnes.length > 0) {
+        allCves = [...allCves, ...newOnes];
+        renderCves();
+        renderStats();
+        renderVendorChart();
+        renderDonut();
+        renderAttackGrid();
+        renderEmergingThreats();
+        addLog('SYNC', `Merged ${newOnes.length} new CVEs from external source`);
+      }
+    }
+
+    // ── Helpers ───────────────────────────────────────────
+    function getCvss(vuln) {
+      const m = vuln.cve.metrics;
+      if (!m) return 0;
+      // Check all metric versions, prefer Primary (NVD) over Secondary (CNA)
+      const metricKeys = ['cvssMetricV40', 'cvssMetricV31', 'cvssMetricV30', 'cvssMetricV2'];
+      let best = 0;
+      for (const key of metricKeys) {
+        const pool = m[key];
+        if (!pool || !Array.isArray(pool)) continue;
+        // Look for Primary (NVD) first
+        const primary = pool.find(e => e.type === 'Primary');
+        if (primary && primary.cvssData && primary.cvssData.baseScore > 0) return primary.cvssData.baseScore;
+        // Fall back to any entry with a score (CNA / Secondary)
+        for (const entry of pool) {
+          const s = (entry.cvssData && entry.cvssData.baseScore) ? entry.cvssData.baseScore : 0;
+          if (s > best) best = s;
+        }
+        if (best > 0) return best;
+      }
+      return best;
+    }
+
+    function getCveLink(id) {
+      if (/^PAN-SA-/i.test(id)) return `https://security.paloaltonetworks.com/${encodeURIComponent(id)}`;
+      return `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(id)}`;
+    }
+
+    function getSeverity(score) {
+      if (score >= 9) return 'CRITICAL';
+      if (score >= 7) return 'HIGH';
+      if (score >= 4) return 'MEDIUM';
+      if (score > 0) return 'LOW';
+      return 'NONE';
+    }
+
+    function getVendor(vuln) {
+      const desc = vuln.cve.descriptions?.[0]?.value || '';
+      const configs = vuln.cve.configurations?.[0]?.nodes?.[0]?.cpeMatch;
+      if (configs?.[0]) {
+        const cpe = configs[0].criteria;
+        const parts = cpe.split(':');
+        return parts[3] || 'unknown';
+      }
+      return 'unknown';
+    }
+
+    // ── Render CVE Feed ───────────────────────────────────
+    function filterSeverity(sev, btn) {
+      currentFilter = sev;
+      document.querySelectorAll('.filter-tabs:first-of-type .ftab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      renderCves();
+    }
+
+    function filterSource(src, btn) {
+      currentSourceFilter = src;
+      document.querySelectorAll('#source-tabs .ftab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      renderCves();
+    }
+
+    function getSourceLabel(v) {
+      return (v._source || 'nvd').toLowerCase();
+    }
+
+    function renderCves() {
+      const feed = document.getElementById('cve-feed');
+      const savedScrollTop = feed.scrollTop; // preserve scroll — innerHTML replace resets it to 0
+      let cvesToShow = allCves;
+
+      // Severity filter
+      if (currentFilter !== 'ALL') {
+        cvesToShow = cvesToShow.filter(v => {
+          const score = getCvss(v);
+          return getSeverity(score) === currentFilter;
+        });
+      }
+
+      // Source filter
+      if (currentSourceFilter !== 'ALL') {
+        if (currentSourceFilter === 'kev') {
+          cvesToShow = cvesToShow.filter(v => v._kevExploited);
+        } else {
+          cvesToShow = cvesToShow.filter(v => getSourceLabel(v) === currentSourceFilter);
+        }
+      }
+
+      // Company mode filter
+      if (companyModeActive && companyTechStack.length > 0) {
+        cvesToShow = cvesToShow.filter(v => matchesCompanyStack(v));
+      }
+
+      // Sort by CVSS desc
+      cvesToShow.sort((a, b) => getCvss(b) - getCvss(a));
+
+      const countLabel = document.getElementById('cve-count-label');
+      if (cvesToShow.length === 0) {
+        const companyHint = companyModeActive && companyTechStack.length > 0
+          ? ` — Company mode active (${companyTechStack.join(', ')})`
+          : '';
+        feed.innerHTML = `<div class="error-msg">NO VULNERABILITIES MATCH FILTERS${companyHint}</div>`;
+        if (countLabel) countLabel.textContent = '';
+        return;
+      }
+
+      if (countLabel) {
+        countLabel.textContent = cvesToShow.length > 200
+          ? `top 200 of ${cvesToShow.length.toLocaleString()} · sorted by CVSS`
+          : `${cvesToShow.length} entries`;
+      }
+
+      feed.innerHTML = cvesToShow.slice(0, 200).map(v => {
+        const score = getCvss(v);
+        const sev = getSeverity(score);
+        const desc = v.cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
+        const shortDesc = desc.length > 120 ? desc.substring(0, 120) + '...' : desc;
+        const published = v.cve.published?.substring(0, 10) || '';
+        const src = getSourceLabel(v);
+        const kevBadge = v._kevExploited ? '<span class="kev-tag">⚡EXPLOITED</span>' : '';
+        const owaspCat = classifyOwaspApi(v);
+        const owaspBadge = owaspCat ? `<span class="owasp-tag">OWASP ${owaspCat}</span>` : '';
+
+        return `
+    <div class="cve-item">
+      <div>
+        <a class="cve-id" href="${getCveLink(v.cve.id)}" target="_blank" rel="noopener" style="text-decoration:none">${v.cve.id}</a>${kevBadge}${owaspBadge}
+        <div class="cve-vendor" style="margin-top:4px">${published}</div>
+      </div>
+      <div>
+        <div class="cve-desc">${shortDesc}</div>
+      </div>
+      <div>
+        <span class="cve-source src-${src}">${src.toUpperCase()}</span>
+      </div>
+      <div>
+        <span class="severity-badge sev-${sev}">${score > 0 ? sev : 'N/A'}</span>
+      </div>
+      <div class="cvss-score" style="color:${score >= 9 ? 'var(--critical)' : score >= 7 ? 'var(--high)' : score >= 4 ? 'var(--medium)' : score > 0 ? 'var(--low)' : 'var(--muted)'}">${score > 0 ? score.toFixed(1) : 'N/A'}</div>
+    </div>`;
+      }).join('');
+      feed.scrollTop = savedScrollTop; // restore so incremental page loads don't jump to top
+
+      // Log new criticals
+      const criticals = cvesToShow.filter(v => getCvss(v) >= 9);
+      if (criticals.length > 0) {
+        addLog('CVE', `${criticals.length} CRITICAL CVEs detected in current dataset`);
+      }
+    }
+
+    // ── Render Stats ──────────────────────────────────────────
+    function getAffectedProducts(vuln) {
+      const configs = vuln.cve.configurations;
+      const products = [];
+      if (configs) {
+        configs.forEach(c => {
+          c.nodes?.forEach(n => {
+            n.cpeMatch?.forEach(m => {
+              const parts = m.criteria?.split(':') || [];
+              const vendor = parts[3] || '';
+              const product = parts[4] || '';
+              if (vendor && vendor !== '*' && product && product !== '*') {
+                products.push(vendor + ' ' + product.replace(/_/g, ' '));
+              } else if (vendor && vendor !== '*') {
+                products.push(vendor);
+              }
+            });
+          });
+        });
+      }
+      // Deduplicate
+      return [...new Set(products)].slice(0, 3);
+    }
+
+    // Returns allCves filtered by company mode (if active)
+    function getActiveCves() {
+      if (companyModeActive && companyTechStack.length > 0) {
+        return allCves.filter(v => matchesCompanyStack(v));
+      }
+      return allCves;
+    }
+
+    function renderStats() {
+      const activeCves = getActiveCves();
+      const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+      activeCves.forEach(v => {
+        const s = getSeverity(getCvss(v));
+        if (counts[s] !== undefined) counts[s]++;
+        else counts['LOW']++;
+      });
+      document.getElementById('cnt-critical').textContent = counts.CRITICAL;
+      document.getElementById('cnt-high').textContent = counts.HIGH;
+      document.getElementById('cnt-medium').textContent = counts.MEDIUM;
+      document.getElementById('cnt-low').textContent = counts.LOW;
+
+      // KEV count from exploited entries
+      const kevCount = activeCves.filter(v => v._kevExploited).length;
+      document.getElementById('cnt-kev').textContent = kevCount || kevData.length || '--';
+
+      // Update subtitles with top affected vendors
+      const sevMap = { CRITICAL: 'sub-critical', HIGH: 'sub-high', MEDIUM: 'sub-medium', LOW: 'sub-low' };
+      for (const [sev, elId] of Object.entries(sevMap)) {
+        const el = document.getElementById(elId);
+        if (!el) continue;
+        const top = getTopVendors(activeCves, sev, 3);
+        if (top.length > 0) {
+          el.textContent = top.join(', ') + ' · Click for details';
+        } else {
+          el.textContent = 'No data';
+        }
+      }
+    }
+
+    // ── Vendor Chart ──────────────────────────────────────
+    function renderVendorChart() {
+      const vendorMap = {};
+      getActiveCves().forEach(v => {
+        const vendor = getVendor(v);
+        vendorMap[vendor] = (vendorMap[vendor] || 0) + 1;
+      });
+
+      const sorted = Object.entries(vendorMap)
+        .filter(([k]) => k !== 'unknown')
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8);
+
+      const max = sorted[0]?.[1] || 1;
+      const colors = ['#ff3e6c', '#ff7b00', '#ffaa00', '#00d4ff', '#39ff14', '#b44fff', '#00d4ff', '#ff3e6c'];
+
+      document.getElementById('vendor-chart').innerHTML = sorted.map(([vendor, count], i) => `
+<div class="bar-row" style="cursor:pointer" onclick="openVendorModal('${vendor}')">
+  <div class="bar-label">${vendor.toUpperCase().substring(0, 10)}</div>
+  <div class="bar-track">
+    <div class="bar-fill" style="width:${(count / max * 100).toFixed(1)}%;background:${colors[i]};box-shadow:0 0 8px ${colors[i]}44;"></div>
+  </div>
+  <div class="bar-count" style="color:${colors[i]}">${count}</div>
+</div>
+  `).join('') || '<div style="padding:20px;color:var(--muted);font-family:\'JetBrains Mono\',monospace;font-size:12px">Vendor data requires CPE configurations</div>';
+    }
+
+    function openVendorModal(vendor) {
+      const overlay = document.getElementById('modal-overlay');
+      const title = document.getElementById('modal-title');
+      const body = document.getElementById('modal-body');
+      document.getElementById('export-csv-btn').style.display = 'none';
+      document.getElementById('export-pdf-btn').style.display = 'none';
+
+      title.textContent = `📊 ${vendor.toUpperCase()} — Vulnerabilities`;
+      title.style.color = 'var(--amber)';
+
+      const filtered = getActiveCves().filter(v => getVendor(v) === vendor)
+        .sort((a, b) => getCvss(b) - getCvss(a));
+
+      if (filtered.length === 0) {
+        body.innerHTML = '<div class="modal-empty">NO CVEs FOUND FOR THIS VENDOR</div>';
+      } else {
+        body.innerHTML = filtered.slice(0, 30).map(v => {
+          const score = getCvss(v);
+          const sev = getSeverity(score);
+          const desc = v.cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
+          const shortDesc = desc.length > 200 ? desc.substring(0, 200) + '...' : desc;
+          const published = v.cve.published?.substring(0, 10) || '';
+          const scoreColor = score >= 9 ? 'var(--critical)' : score >= 7 ? 'var(--high)' : score >= 4 ? 'var(--medium)' : 'var(--low)';
+          const affected = getAffectedProducts(v);
+          const affectedHtml = affected.length > 0
+            ? `<div style="margin-top:5px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--warn)">⚠ Affected: ${affected.join(', ')}</div>`
+            : '';
+          return `
+        <div class="modal-item">
+          <div class="modal-item-header">
+            <a href="${getCveLink(v.cve.id)}" target="_blank" rel="noopener">${v.cve.id}</a>
+            <span class="severity-badge sev-${sev}">${sev}</span>
+            <span class="modal-item-score" style="color:${scoreColor}">${score.toFixed(1)}</span>
+            <span class="modal-item-date">${published}</span>
+          </div>
+          <div class="modal-item-desc">${shortDesc}</div>
+          ${affectedHtml}
+        </div>
+        </div>
+      `;
+        }).join('');
+      }
+
+      overlay.classList.add('active');
+    }
+    // ── Donut Chart ───────────────────────────────────────
+    function renderDonut() {
+      const activeCves = getActiveCves();
+      const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, NONE: 0 };
+      activeCves.forEach(v => {
+        const s = getSeverity(getCvss(v));
+        counts[s] = (counts[s] || 0) + 1;
+      });
+      const total = activeCves.length || 1;
+      const cfg = [
+        { label: 'CRITICAL', color: '#ff3e6c', key: 'CRITICAL' },
+        { label: 'HIGH', color: '#ff7b00', key: 'HIGH' },
+        { label: 'MEDIUM', color: '#ffaa00', key: 'MEDIUM' },
+        { label: 'LOW', color: '#39ff14', key: 'LOW' },
+        { label: 'NONE', color: '#4a6080', key: 'NONE' },
+      ];
+
+      // Build SVG donut
+      const r = 60, cx = 75, cy = 75, stroke = 18;
+      const circumference = 2 * Math.PI * r;
+      let offset = 0;
+      const segments = cfg.map(c => {
+        const pct = counts[c.key] / total;
+        const dash = pct * circumference;
+        const gap = circumference - dash;
+        const seg = { ...c, pct, dash, gap, offset };
+        offset += dash;
+        return seg;
+      });
+
+      const svgSegments = segments.map(s => `
+    <circle r="${r}" cx="${cx}" cy="${cy}"
+      fill="none" stroke="${s.color}" stroke-width="${stroke}"
+      stroke-dasharray="${s.dash} ${s.gap}"
+      stroke-dashoffset="${-s.offset + circumference * 0.25}"
+      opacity="${s.pct > 0 ? 0.85 : 0}"
+    />
+  `).join('');
+
+      document.getElementById('donut-wrap').innerHTML = `
+    <svg class="donut" width="150" height="150" viewBox="0 0 150 150">
+      <circle r="${r}" cx="${cx}" cy="${cy}" fill="none" stroke="var(--surface2)" stroke-width="${stroke}"/>
+      ${svgSegments}
+      <text x="${cx}" y="${cy - 6}" text-anchor="middle" fill="var(--amber)" font-family="Bebas Neue" font-size="18" font-weight="700">${total}</text>
+      <text x="${cx}" y="${cy + 12}" text-anchor="middle" fill="var(--muted)" font-family="JetBrains Mono" font-size="9">CVEs</text>
+    </svg>
+    <div class="donut-legend">
+      ${cfg.map(c => `
+        <div class="legend-item">
+          <div class="legend-dot" style="background:${c.color};box-shadow:0 0 6px ${c.color}"></div>
+          <div class="legend-label">${c.label}</div>
+          <div class="legend-pct" style="color:${c.color}">${((counts[c.key] / total) * 100).toFixed(1)}%</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+    }
+
+    // (KEV feed removed — unified into All Vulnerabilities panel)
+
+    // -- Attack Categories -- computed from live allCves[] --
+    const ATTACK_DEFS = [
+      { icon: '💉', name: 'SQL INJECTION',     keys: /sql.?inject|\bsqli\b/i },
+      { icon: '⚡',     name: 'REMOTE CODE EXEC',  keys: /remote.code.exec|arbitrary.code|\brce\b|code.execution/i },
+      { icon: '🎯', name: 'XSS',               keys: /cross.site.script|\bxss\b/i },
+      { icon: '💣', name: 'BUFFER OVERFLOW',   keys: /buffer.overflow|stack.overflow|heap.overflow|out.of.bounds.write/i },
+      { icon: '📁', name: 'PATH TRAVERSAL',    keys: /path.travers|directory.travers|\blfi\b|local.file.incl/i },
+      { icon: '🔓', name: 'AUTH BYPASS',       keys: /auth(?:entication)?.bypass|bypass.auth|credential.bypass/i },
+      { icon: '🔺', name: 'PRIV ESCALATION',   keys: /privilege.escal|elevation.of.priv|local.privilege/i },
+      { icon: '🚫', name: 'DENIAL OF SERVICE', keys: /denial.of.service|\bddos\b|resource.exhaustion/i },
+    ];
+
+    function renderAttackGrid() {
+      const activeCves = getActiveCves();
+      const total = activeCves.length || 1;
+      const counts = ATTACK_DEFS.map(def => {
+        const count = activeCves.filter(v => {
+          const desc = v.cve?.descriptions?.find(d => d.lang === 'en')?.value || '';
+          return def.keys.test(desc);
+        }).length;
+        return { icon: def.icon, name: def.name, count };
+      }).sort((a, b) => b.count - a.count);
+
+      const html = counts.map(a => {
+        const pct = ((a.count / total) * 100).toFixed(1);
+        return '<div class="attack-tile">'
+          + '<div class="attack-icon">' + a.icon + '</div>'
+          + '<div class="attack-name">' + a.name + '</div>'
+          + '<div class="attack-count">' + a.count.toLocaleString() + '</div>'
+          + '<div class="attack-trend">'
+          + '<span class="trend-pct" style="color:var(--amber);font-size:13px">' + pct + '%</span>'
+          + '<span class="trend-label">of loaded CVEs</span>'
+          + '</div></div>';
+      }).join('');
+      document.getElementById('attack-grid').innerHTML = html;
+    }
+
+    // ── EMERGING THREATS RENDER ────────────────────────
+    const EMERGING_DEFS = [
+      {
+        icon: '🔐', name: 'Ransomware', level: 'CRITICAL', cls: 'tl-critical',
+        keys: /ransomware|ransom(?:ware)?/i,
+        desc: 'Active campaigns targeting critical infrastructure, healthcare &amp; finance sectors',
+        src: 'SRC: CISA Advisories 2024'
+      },
+      {
+        icon: '🤖', name: 'AI-Powered Attacks', level: 'HIGH', cls: 'tl-high',
+        keys: /llm|large.language.model|deepfake|ai.assisted|ai.powered/i,
+        desc: 'LLM-assisted phishing, deepfake impersonation &amp; automated vulnerability recon',
+        src: 'SRC: CrowdStrike Global Threat Report 2024'
+      },
+      {
+        icon: '🎣', name: 'Phishing / BEC', level: 'HIGH', cls: 'tl-high',
+        keys: /phish|spear.phish|vish(?:ing)?|business.email.compromise|bec/i,
+        desc: 'Business email compromise, spear phishing &amp; voice phishing (vishing) campaigns',
+        src: 'SRC: Verizon DBIR 2024 — 36% of breaches'
+      },
+      {
+        icon: '🔗', name: 'Supply Chain', level: 'HIGH', cls: 'tl-high',
+        keys: /supply.chain|dependency.confusion|typosquat|malicious.package/i,
+        desc: 'Dependency confusion, typosquatting &amp; malicious package injection in open source',
+        src: 'SRC: OpenSSF / GitHub Advisory DB'
+      },
+      {
+        icon: '⛓️', name: 'Blockchain / Web3', level: 'MEDIUM', cls: 'tl-medium',
+        keys: /blockchain|smart.contract|web3|defi|cross.chain|flash.loan|cryptocurrency/i,
+        desc: 'Smart contract exploits, cross-chain bridge attacks &amp; flash loan manipulation',
+        src: 'SRC: Chainalysis Crypto Crime Report 2024'
+      },
+      {
+        icon: '👤', name: 'Insider Threats', level: 'MEDIUM', cls: 'tl-medium',
+        keys: /insider.threat|privilege.abus|credential.abus|data.exfiltrat|unauthorized.access/i,
+        desc: 'Credential abuse, data exfiltration &amp; privilege misuse by malicious or negligent insiders',
+        src: 'SRC: CISA Insider Threat Mitigation Guide'
+      }
+    ];
+
+    function renderEmergingThreats() {
+      const activeCves = getActiveCves();
+      const total = activeCves.length;
+      const html = EMERGING_DEFS.map(def => {
+        const count = total ? activeCves.filter(v => {
+          const desc = v.cve?.descriptions?.find(d => d.lang === 'en')?.value || '';
+          return def.keys.test(desc);
+        }).length : 0;
+        const pct = total ? ((count / total) * 100).toFixed(1) : '0.0';
+        const cntClass = count === 0 ? 'emerging-count zero' : 'emerging-count';
+        const cntLabel = total ? count.toLocaleString() + ' CVEs · ' + pct + '%' : 'NO DATA';
+        return '<div class="emerging-tile ' + def.cls + '">'
+          + '<div class="emerging-icon">' + def.icon + '</div>'
+          + '<div class="emerging-body">'
+          + '<div class="emerging-header">'
+          + '<div class="emerging-name">' + def.name + '</div>'
+          + '<span class="threat-level">' + def.level + '</span>'
+          + '<span class="' + cntClass + '">' + cntLabel + '</span>'
+          + '</div>'
+          + '<div class="emerging-desc">' + def.desc + '</div>'
+          + '<div class="emerging-source">' + def.src + '</div>'
+          + '</div></div>';
+      }).join('');
+      document.getElementById('emerging-grid').innerHTML = html;
+    }
+
+    // ── Demo Data (fallback) ──────────────────────────────
+    function loadDemoData() {
+      allCves = generateDemoCves(80);
+      renderCves();
+      renderStats();
+      renderVendorChart();
+      renderDonut();
+      renderAttackGrid();
+      renderEmergingThreats();
+      addLog('SYNC', 'Demo data loaded — connect to live APIs for real data');
+    }
+
+    function generateDemoCves(n) {
+      const vendors = ['microsoft', 'apache', 'linux', 'cisco', 'google', 'oracle', 'adobe', 'mozilla', 'openssl', 'wordpress'];
+      const types = ['Buffer Overflow in', 'Remote Code Execution in', 'SQL Injection vulnerability in', 'Authentication Bypass in', 'Memory Corruption in', 'Improper Input Validation in', 'Use After Free vulnerability in', 'Out-of-bounds Write in'];
+      const products = ['Windows Kernel', 'Apache HTTP Server', 'Linux Kernel', 'Cisco IOS', 'Chrome Browser', 'Oracle Database', 'Adobe Acrobat', 'Firefox', 'OpenSSL', 'WP Core'];
+      const now = new Date();
+
+      return Array.from({ length: n }, (_, i) => {
+        const score = Math.random() * 10;
+        const vi = i % vendors.length;
+        return {
+          cve: {
+            id: `CVE-2024-${(10000 + Math.floor(Math.random() * 90000)).toString()}`,
+            published: new Date(now - Math.random() * 30 * 86400000).toISOString(),
+            descriptions: [{ lang: 'en', value: `${types[i % types.length]} ${products[vi]}: allows remote attackers to execute arbitrary code via crafted input.` }],
+            metrics: { cvssMetricV31: [{ cvssData: { baseScore: parseFloat(score.toFixed(1)) } }] },
+            configurations: [{ nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:${vendors[vi]}:product:*:*:*` }] }] }]
+          }
+        };
+      });
+    }
+
+    function loadKevDemo() {
+      const demoKev = [
+        { cveID: 'CVE-2024-3400', vulnerabilityName: 'PAN-OS Command Injection', dateAdded: '2024-04-12' },
+        { cveID: 'CVE-2024-21762', vulnerabilityName: 'Fortinet SSL VPN Out-of-Bounds Write', dateAdded: '2024-02-09' },
+        { cveID: 'CVE-2024-1709', vulnerabilityName: 'ConnectWise ScreenConnect Auth Bypass', dateAdded: '2024-02-22' },
+        { cveID: 'CVE-2023-46805', vulnerabilityName: 'Ivanti Connect Secure Auth Bypass', dateAdded: '2024-01-10' },
+        { cveID: 'CVE-2024-27198', vulnerabilityName: 'JetBrains TeamCity Auth Bypass', dateAdded: '2024-03-04' },
+      ];
+      kevData = demoKev;
+      document.getElementById('cnt-kev').textContent = '1,100+';
+      // Convert demo KEV to unified format and merge
+      const kevCves = demoKev.map(k => ({
+        _source: 'kev',
+        _kevExploited: true,
+        cve: {
+          id: k.cveID,
+          published: k.dateAdded || '',
+          descriptions: [{ lang: 'en', value: k.vulnerabilityName }],
+          metrics: {},
+          configurations: []
+        }
+      }));
+      mergeExternalCves(kevCves);
+    }
+
+    // ── Simulate periodic log events ─────────────────────
+    function simulateActivity() {
+      const events = [
+        ['CVE', 'New vulnerability published: scanning NVD for CVSS ≥ 9.0...'],
+        ['ALERT', 'Spike detected in SQL Injection reports — OWASP Top 10'],
+        ['KEV', 'CISA added 3 new actively exploited vulnerabilities'],
+        ['CVE', 'Patch Tuesday cycle: Microsoft released 74 security updates'],
+        ['ALERT', 'Ransomware activity elevated in healthcare sector'],
+        ['SYNC', 'NVD API heartbeat — connection nominal'],
+        ['CVE', 'Critical zero-day reported in widely used cryptographic library'],
+        ['ALERT', 'Smart contract vulnerability detected in Solana ecosystem'],
+        ['KEV', 'Federal agencies have 21 days to patch newly added KEV entries'],
+      ];
+      let idx = 0;
+      const interval = setInterval(() => {
+        const [type, msg] = events[idx % events.length];
+        addLog(type, msg);
+        idx++;
+      }, 4000);
+    }
+
+
+    // INVENTORY FILE IMPORT
+    const INV_VENDOR_COLS = ['vendor','manufacturer','brand','make','publisher','developer','company','provider','supplier','mfr','mfg'];
+    const INV_PRODUCT_COLS = ['software','application','product','app','program','title','model','solution','tool','package'];
+    const INV_SKIP = new Set(['n/a','na','none','unknown','other','yes','no','true','false','null','undefined','','-','any']);
+    function invDragOver(e){e.preventDefault();document.getElementById('inv-drop-zone').classList.add('inv-dragover');}
+    function invDragLeave(){document.getElementById('inv-drop-zone').classList.remove('inv-dragover');}
+    function invDrop(e){e.preventDefault();document.getElementById('inv-drop-zone').classList.remove('inv-dragover');var f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];if(f)parseInventoryFile(f);}
+    function parseInventoryFile(file){if(!file)return;var ext=file.name.split('.').pop().toLowerCase();showInvResult('','Parsing '+file.name+'...');var reader=new FileReader();reader.onload=function(ev){try{var rows=[];if(ext==='csv'){rows=invCsvToRows(ev.target.result);}else if(ext==='xls'||ext==='xlsx'){if(typeof XLSX==='undefined'){showInvResult('err','XLS parser not loaded. Try again or use CSV.');return;}var wb=XLSX.read(ev.target.result,{type:'binary'});var ws=wb.Sheets[wb.SheetNames[0]];rows=XLSX.utils.sheet_to_json(ws,{defval:''});}else{showInvResult('err','Unsupported format. Use .csv, .xls or .xlsx');return;}processInventoryRows(rows);}catch(err){showInvResult('err','Parse error: '+err.message);}};if(ext==='csv')reader.readAsText(file);else reader.readAsBinaryString(file);}
+    function invCsvToRows(text){var lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').trim().split('\n');if(lines.length<2)return[];function splitLine(line){var out=[],cur='',inQ=false;for(var i=0;i<line.length;i++){var c=line[i];if(c==='"'){inQ=!inQ;}else if(c===','&&!inQ){out.push(cur.trim());cur='';}else cur+=c;}out.push(cur.trim());return out;}var headers=splitLine(lines[0]).map(function(h){return h.replace(/^"|"$/g,'').trim();});return lines.slice(1).map(function(line){var vals=splitLine(line),row={};headers.forEach(function(h,i){row[h]=(vals[i]||'').replace(/^"|"$/g,'').trim();});return row;}).filter(function(row){return Object.values(row).some(function(v){return v;});});}
+    function processInventoryRows(rows){if(!rows.length){showInvResult('err','File is empty or unreadable');return;}var allKeys=Object.keys(rows[0]);var scored=allKeys.map(function(k){var lk=k.toLowerCase();var vs=INV_VENDOR_COLS.some(function(c){return lk.includes(c);})?2:0;var ps=INV_PRODUCT_COLS.some(function(c){return lk.includes(c);})?1:0;return{key:k,score:vs+ps,isVendor:vs>0};}).filter(function(c){return c.score>0;}).sort(function(a,b){return b.score-a.score;});var usedCols=scored;if(!usedCols.length){usedCols=allKeys.filter(function(k){var samples=rows.slice(0,10).map(function(r){return String(r[k]||'').trim();}).filter(Boolean);return samples.length>0&&samples.every(function(s){return isNaN(s)&&s.length>=2&&s.length<=40;});}).slice(0,4).map(function(k){return{key:k,isVendor:false};});}if(!usedCols.length){showInvResult('warn','No vendor/brand columns detected. Rename columns to: vendor, manufacturer, software, product');return;}var keywords=new Set();rows.forEach(function(row){usedCols.forEach(function(col){var raw=String(row[col.key]||'').trim().toLowerCase();if(!raw||INV_SKIP.has(raw)||raw.length<2)return;raw.split(/[,;|\/]+/).forEach(function(part){part=part.trim().replace(/[^a-z0-9 .\-_]/g,'').trim();if(!part||part.length<2)return;var fw=part.split(/\s+/)[0].trim();var ml=col.isVendor?2:3;if(fw.length>=ml&&!INV_SKIP.has(fw))keywords.add(fw);});});});var newKws=Array.from(keywords).filter(function(k){return!_modalTechStack.includes(k);}).sort();var dup=keywords.size-newKws.length;if(!newKws.length&&!keywords.size){showInvResult('warn','No keywords extracted. Ensure file has text in labeled columns.');return;}newKws.forEach(function(k){_modalTechStack.push(k);});renderTechTags();var cols=usedCols.map(function(c){return c.key;}).join(', ');var dupNote=dup?' ('+dup+' already in stack)':'';showInvResult('ok',newKws.length+' keyword'+(newKws.length!==1?'s':'')+' imported from '+rows.length+' rows'+dupNote+'|Columns: '+cols,newKws.slice(0,20),newKws.length>20);}
+    function showInvResult(type,msg,previewTags,hasMore){var el=document.getElementById('inv-result');if(!el)return;if(!type){el.className='inv-result';el.style.display='block';el.textContent=msg;return;}el.className='inv-result '+type;el.style.display='block';el.innerHTML=msg.split('|').map(function(l){return'<div>'+l+'</div>';}).join('');if(previewTags&&previewTags.length){var more=hasMore?'<span class="inv-preview-tag" style="color:var(--muted)">+more</span>':'';el.innerHTML+='<div class="inv-preview">'+previewTags.map(function(t){return'<span class="inv-preview-tag">'+t+'</span>';}).join('')+more+'</div>';}}
+
+
+    // ── Modal ──────────────────────────────────────────────
+    function openModal(type) {
+      const overlay = document.getElementById('modal-overlay');
+      const title = document.getElementById('modal-title');
+      const body = document.getElementById('modal-body');
+      document.getElementById('export-csv-btn').style.display = 'none';
+      document.getElementById('export-pdf-btn').style.display = 'none';
+
+      if (type === 'KEV') {
+        title.textContent = '🔴 CISA KEV — Actively Exploited';
+        title.style.color = 'var(--critical)';
+        const items = [...kevData].sort((a, b) => new Date(b.dateAdded) - new Date(a.dateAdded)).slice(0, 30);
+        if (items.length === 0) {
+          body.innerHTML = '<div class="modal-empty">NO KEV DATA LOADED</div>';
+        } else {
+          body.innerHTML = items.map(k => `
+            <div class="modal-item">
+              <div class="modal-item-header">
+                <a href="https://nvd.nist.gov/vuln/detail/${k.cveID}" target="_blank" rel="noopener">${k.cveID}</a>
+                <span class="severity-badge sev-CRITICAL">EXPLOITED</span>
+                <span class="modal-item-date">${k.dateAdded || ''}</span>
+              </div>
+              <div class="modal-item-desc">${k.vulnerabilityName || k.shortDescription || 'No description available'}</div>
+            </div>
+          `).join('');
+        }
+      } else {
+        const sevColors = { CRITICAL: 'var(--critical)', HIGH: 'var(--high)', MEDIUM: 'var(--medium)', LOW: 'var(--low)' };
+        title.textContent = `⚡ ${type} Severity CVEs`;
+        title.style.color = sevColors[type] || 'var(--amber)';
+
+        const filtered = allCves.filter(v => {
+          const score = getCvss(v);
+          const sev = getSeverity(score);
+          if (type === 'LOW') return sev === 'LOW' || sev === 'NONE';
+          return sev === type;
+        }).sort((a, b) => getCvss(b) - getCvss(a));
+
+        if (filtered.length === 0) {
+          body.innerHTML = '<div class="modal-empty">NO CVEs FOUND FOR THIS SEVERITY</div>';
+        } else {
+          body.innerHTML = filtered.slice(0, 30).map(v => {
+            const score = getCvss(v);
+            const sev = getSeverity(score);
+            const desc = v.cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
+            const shortDesc = desc.length > 200 ? desc.substring(0, 200) + '...' : desc;
+            const published = v.cve.published?.substring(0, 10) || '';
+            const scoreColor = score >= 9 ? 'var(--critical)' : score >= 7 ? 'var(--high)' : score >= 4 ? 'var(--medium)' : 'var(--low)';
+            const affected = getAffectedProducts(v);
+            const affectedHtml = affected.length > 0
+              ? `<div style="margin-top:5px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--warn)">⚠ Affected: ${affected.join(', ')}</div>`
+              : '';
+            return `
+              <div class="modal-item">
+                <div class="modal-item-header">
+                  <a href="${getCveLink(v.cve.id)}" target="_blank" rel="noopener">${v.cve.id}</a>
+                  <span class="severity-badge sev-${sev}">${sev}</span>
+                  <span class="modal-item-score" style="color:${scoreColor}">${score.toFixed(1)}</span>
+                  <span class="modal-item-date">${published}</span>
+                </div>
+                <div class="modal-item-desc">${shortDesc}</div>
+                ${affectedHtml}
+              </div>
+            `;
+          }).join('');
+        }
+      }
+
+      overlay.classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('modal-overlay').classList.remove('active');
+      document.getElementById('export-csv-btn').style.display = 'none';
+      document.getElementById('export-pdf-btn').style.display = 'none';
+    }
+
+    // Close on Escape key
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+    // ── Panel export (main CVE feed) ─────────────────────────
+    function _getPanelCves() {
+      let cvs = allCves.slice();
+      if (currentFilter !== 'ALL') cvs = cvs.filter(v => getSeverity(getCvss(v)) === currentFilter);
+      if (currentSourceFilter !== 'ALL') {
+        if (currentSourceFilter === 'kev') {
+          cvs = cvs.filter(v => v._kevExploited);
+        } else {
+          cvs = cvs.filter(v => getSourceLabel(v) === currentSourceFilter);
+        }
+      }
+      return cvs.sort((a, b) => getCvss(b) - getCvss(a));
+    }
+
+    function exportPanelCSV() {
+      const cvs = _getPanelCves();
+      if (cvs.length === 0) { addLog('ALERT', 'No CVEs to export'); return; }
+      const rows = [['CVE ID', 'Severity', 'CVSS Score', 'Published', 'Source', 'KEV Exploited', 'Affected Products', 'Description']];
+      cvs.forEach(v => {
+        const score = getCvss(v);
+        rows.push([
+          v.cve.id || '',
+          score > 0 ? getSeverity(score) : 'UNKNOWN',
+          score > 0 ? score.toFixed(1) : '',
+          v.cve.published?.substring(0, 10) || '',
+          getSourceLabel(v).toUpperCase(),
+          v._kevExploited ? 'YES' : 'NO',
+          getAffectedProducts(v).join('; '),
+          (v.cve.descriptions?.find(d => d.lang === 'en')?.value || '').replace(/\r?\n/g, ' ')
+        ]);
+      });
+      const srcLabel = currentSourceFilter !== 'ALL' ? '_' + currentSourceFilter.toUpperCase() : '';
+      const sevLabel = currentFilter !== 'ALL' ? '_' + currentFilter : '';
+      const rangeText = (document.getElementById('range-info').textContent || 'export').replace(/[^a-z0-9]/gi, '_').substring(0, 30);
+      const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `threatwatch-${cvs.length}_rows${srcLabel}${sevLabel}-${rangeText}-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportPanelPDF() {
+      const cvs = _getPanelCves();
+      if (cvs.length === 0) { addLog('ALERT', 'No CVEs to export'); return; }
+      const rangeInfo = document.getElementById('range-info').textContent || '';
+      const total = cvs.length;
+      let html = `<h1>ThreatWatch — Vulnerability Report</h1>`;
+      html += `<div class="pr-meta">${new Date().toISOString().replace('T', ' ').substring(0, 19)} UTC · ${total.toLocaleString()} CVE${total !== 1 ? 's' : ''}${rangeInfo ? ' · ' + rangeInfo : ''}</div>`;
+      html += `<div class="pr-section">CVEs (${total.toLocaleString()})</div>`;
+      cvs.forEach(v => {
+        const score = getCvss(v);
+        const sev = score > 0 ? getSeverity(score) : 'UNKNOWN';
+        const scoreStr = score > 0 ? ` — CVSS ${score.toFixed(1)}` : '';
+        const desc = v.cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
+        const affected = getAffectedProducts(v);
+        const kev = v._kevExploited ? ' · ⚡ KEV EXPLOITED' : '';
+        html += `<div class="pr-item">
+          <div class="pr-id">${v.cve.id} &nbsp; ${sev}${scoreStr}${kev}</div>
+          <div class="pr-sub">${v.cve.published?.substring(0, 10) || ''} · ${getSourceLabel(v).toUpperCase()}${affected.length ? ' · ' + affected.join(', ') : ''}</div>
+          <div class="pr-desc">${desc}</div>
+        </div>`;
+      });
+      const printArea = document.getElementById('print-area');
+      printArea.innerHTML = html;
+      printArea.style.display = 'block';
+      window.addEventListener('afterprint', () => { printArea.style.display = 'none'; printArea.innerHTML = ''; }, { once: true });
+      window.print();
+    }
+
+    // ── Search export state ──────────────────────────────────
+    let _lastSearchResults = null; // { query, allResults, kevResults }
+
+    function exportSearchCSV() {
+      if (!_lastSearchResults) return;
+      const { query, allResults, kevResults } = _lastSearchResults;
+
+      const rows = [['CVE ID', 'Severity', 'CVSS Score', 'Published', 'Source', 'KEV Exploited', 'Affected Products', 'Description']];
+
+      allResults.forEach(v => {
+        const score = getCvss(v);
+        rows.push([
+          v.cve.id || '',
+          score > 0 ? getSeverity(score) : 'UNKNOWN',
+          score > 0 ? score.toFixed(1) : '',
+          v.cve.published?.substring(0, 10) || '',
+          getSourceLabel(v).toUpperCase(),
+          v._kevExploited ? 'YES' : 'NO',
+          getAffectedProducts(v).join('; '),
+          (v.cve.descriptions?.find(d => d.lang === 'en')?.value || '').replace(/\r?\n/g, ' ')
+        ]);
+      });
+
+      // KEV entries not already in CVE results
+      const cveIds = new Set(allResults.map(v => v.cve.id));
+      kevResults.filter(k => !cveIds.has(k.cveID)).forEach(k => {
+        const nvdMatch = allCves.find(v => v.cve.id === k.cveID);
+        const score = nvdMatch ? getCvss(nvdMatch) : 0;
+        rows.push([
+          k.cveID || '',
+          score > 0 ? getSeverity(score) : 'UNKNOWN',
+          score > 0 ? score.toFixed(1) : '',
+          k.dateAdded || '',
+          'KEV',
+          'YES',
+          k.vendorProject ? (k.vendorProject + (k.product ? ' ' + k.product : '')) : '',
+          (k.vulnerabilityName || k.shortDescription || '').replace(/\r?\n/g, ' ')
+        ]);
+      });
+
+      const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `threatwatch-${query.replace(/[^a-z0-9]/gi, '_')}-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportSearchPDF() {
+      if (!_lastSearchResults) return;
+      const { query, allResults, kevResults } = _lastSearchResults;
+      const cveIds = new Set(allResults.map(v => v.cve.id));
+      const kevOnly = kevResults.filter(k => !cveIds.has(k.cveID));
+      const total = allResults.length + kevOnly.length;
+
+      let html = `<h1>ThreatWatch — Search: "${query}"</h1>`;
+      html += `<div class="pr-meta">${new Date().toISOString().replace('T', ' ').substring(0, 19)} UTC &nbsp;·&nbsp; ${total} finding${total !== 1 ? 's' : ''}</div>`;
+
+      if (allResults.length > 0) {
+        html += `<div class="pr-section">CVEs (${allResults.length})</div>`;
+        allResults.forEach(v => {
+          const score = getCvss(v);
+          const sev = score > 0 ? getSeverity(score) : 'N/A';
+          const scoreStr = score > 0 ? ` — CVSS ${score.toFixed(1)}` : '';
+          const desc = v.cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
+          const affected = getAffectedProducts(v);
+          const kev = v._kevExploited ? ' · ⚡ KEV EXPLOITED' : '';
+          html += `<div class="pr-item">
+            <div class="pr-id">${v.cve.id} &nbsp; ${sev}${scoreStr}${kev}</div>
+            <div class="pr-sub">${v.cve.published?.substring(0, 10) || ''} · ${getSourceLabel(v).toUpperCase()}${affected.length ? ' · ' + affected.join(', ') : ''}</div>
+            <div class="pr-desc">${desc}</div>
+          </div>`;
+        });
+      }
+
+      if (kevOnly.length > 0) {
+        html += `<div class="pr-section">CISA KEV — additional matches (${kevOnly.length})</div>`;
+        kevOnly.forEach(k => {
+          const nvdMatch = allCves.find(v => v.cve.id === k.cveID);
+          const score = nvdMatch ? getCvss(nvdMatch) : 0;
+          const scoreStr = score > 0 ? ` — CVSS ${score.toFixed(1)}` : '';
+          html += `<div class="pr-item">
+            <div class="pr-id">${k.cveID} &nbsp; EXPLOITED${scoreStr}</div>
+            <div class="pr-sub">${k.dateAdded || ''} · KEV${k.vendorProject ? ' · ' + k.vendorProject + (k.product ? ' ' + k.product : '') : ''}</div>
+            <div class="pr-desc">${k.vulnerabilityName || k.shortDescription || 'No description'}</div>
+          </div>`;
+        });
+      }
+
+      const printArea = document.getElementById('print-area');
+      printArea.innerHTML = html;
+      printArea.style.display = 'block';
+      window.addEventListener('afterprint', () => {
+        printArea.style.display = 'none';
+        printArea.innerHTML = '';
+      }, { once: true });
+      window.print();
+    }
+
+    // ── Search ──────────────────────────────────────────────
+    function renderCveItem(v) {
+      const score = getCvss(v);
+      const sev = getSeverity(score);
+      const desc = v.cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
+      const shortDesc = desc.length > 200 ? desc.substring(0, 200) + '...' : desc;
+      const published = v.cve.published?.substring(0, 10) || '';
+      const scoreColor = score >= 9 ? 'var(--critical)' : score >= 7 ? 'var(--high)' : score >= 4 ? 'var(--medium)' : score > 0 ? 'var(--low)' : 'var(--muted)';
+      const scoreText = score > 0 ? score.toFixed(1) : 'N/A';
+      const sevText = score > 0 ? sev : 'N/A';
+      const affected = getAffectedProducts(v);
+      const affectedHtml = affected.length > 0
+        ? `<div style="margin-top:5px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--warn)">⚠ Affected: ${affected.join(', ')}</div>`
+        : '';
+      return `
+        <div class="modal-item">
+          <div class="modal-item-header">
+            <a href="${getCveLink(v.cve.id)}" target="_blank" rel="noopener">${v.cve.id}</a>
+            <span class="severity-badge sev-${sev}">${sevText}</span>
+            <span class="modal-item-score" style="color:${scoreColor}">${scoreText}</span>
+            <span class="modal-item-date">${published}</span>
+          </div>
+          <div class="modal-item-desc">${shortDesc}</div>
+          ${affectedHtml}
+        </div>
+      `;
+    }
+
+    async function runSearch() {
+      const query = document.getElementById('search-input').value.trim();
+      if (!query) return;
+      const queryLower = query.toLowerCase();
+
+      const overlay = document.getElementById('modal-overlay');
+      const title = document.getElementById('modal-title');
+      const body = document.getElementById('modal-body');
+
+      title.textContent = `🔍 Search: "${query}"`;
+      title.style.color = 'var(--amber)';
+      body.innerHTML = '<div class="modal-empty" style="color:var(--amber)">SEARCHING LOCAL DATA + NVD API...</div>';
+      overlay.classList.add('active');
+
+      // 1) Search local cached CVEs
+      const cveResults = allCves.filter(v => {
+        const id = (v.cve.id || '').toLowerCase();
+        const desc = (v.cve.descriptions?.find(d => d.lang === 'en')?.value || '').toLowerCase();
+        const vendor = getVendor(v).toLowerCase();
+        const products = getAffectedProducts(v).join(' ').toLowerCase();
+        return id.includes(queryLower) || desc.includes(queryLower) || vendor.includes(queryLower) || products.includes(queryLower);
+      }).sort((a, b) => getCvss(b) - getCvss(a));
+
+      // 2) Search local KEV
+      const kevResults = kevData.filter(k => {
+        const id = (k.cveID || '').toLowerCase();
+        const name = (k.vulnerabilityName || k.shortDescription || '').toLowerCase();
+        const vendor = (k.vendorProject || '').toLowerCase();
+        const product = (k.product || '').toLowerCase();
+        return id.includes(queryLower) || name.includes(queryLower) || vendor.includes(queryLower) || product.includes(queryLower);
+      });
+
+      // 3) Live search NVD API
+      let apiResults = [];
+      try {
+        const isPanSA = /^PAN-SA-/i.test(query);
+        const isCveId = /^CVE-\d{4}-\d+$/i.test(query);
+        const isPaloQuery = isPanSA || queryLower.includes('palo alto') || queryLower.includes('paloalto') || queryLower.includes('pan-os');
+
+        // Search NVD API (skip for PAN-SA IDs which NVD doesn't track)
+        if (!isPanSA) {
+          addLog('SYNC', `Querying NVD API for "${query}"...`);
+          try {
+            let apiUrl;
+            if (isCveId) {
+              apiUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${query.toUpperCase()}`;
+            } else {
+              // Use dashboard date range if custom, otherwise search all time
+              let searchStart;
+              if (currentRangeDays === -1) {
+                const startVal = document.getElementById('date-start').value;
+                searchStart = startVal ? new Date(startVal) : new Date('2002-01-01');
+              } else {
+                searchStart = new Date('2002-01-01'); // NVD data goes back to ~2002
+              }
+              const cutoffStr = searchStart.toISOString().split('.')[0] + '.000';
+              apiUrl = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&pubStartDate=${cutoffStr}&resultsPerPage=2000`;
+            }
+            const resp = await fetch(apiUrl);
+            if (resp.ok) {
+              const data = await resp.json();
+              const apiFetched = data.vulnerabilities || [];
+              const localIds = new Set(cveResults.map(v => v.cve.id));
+              // Upgrade local entries that lack CVSS with API metrics
+              apiFetched.forEach(apiV => {
+                if (localIds.has(apiV.cve.id)) {
+                  const local = cveResults.find(v => v.cve.id === apiV.cve.id);
+                  if (local && getCvss(local) === 0 && getCvss(apiV) > 0) {
+                    local.cve.metrics = apiV.cve.metrics;
+                  }
+                }
+                const inAll = allCves.find(v => v.cve.id === apiV.cve.id);
+                if (inAll && getCvss(inAll) === 0 && getCvss(apiV) > 0) {
+                  inAll.cve.metrics = apiV.cve.metrics;
+                }
+              });
+              apiResults = apiFetched.filter(v => !localIds.has(v.cve.id));
+              addLog('SYNC', `NVD API returned ${apiFetched.length} results (${apiResults.length} new)`);
+            }
+          } catch (e) {
+            addLog('ALERT', `Live NVD search failed: ${e.message}`);
+          }
+        }
+
+        // 3b) Enrich local results missing CVSS by fetching individual CVE details
+        const needsEnrich = cveResults.filter(v => getCvss(v) === 0 && /^CVE-/i.test(v.cve.id)).slice(0, 10);
+        if (needsEnrich.length > 0) {
+          addLog('SYNC', `Enriching ${needsEnrich.length} CVEs with missing CVSS scores...`);
+          const enrichPromises = needsEnrich.map(v =>
+            fetch(`https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${v.cve.id}`)
+              .then(r => r.ok ? r.json() : null)
+              .then(data => {
+                if (data && data.vulnerabilities && data.vulnerabilities[0]) {
+                  const fresh = data.vulnerabilities[0];
+                  const freshScore = getCvss(fresh);
+                  if (freshScore > 0) {
+                    v.cve.metrics = fresh.cve.metrics;
+                    // Also update in allCves
+                    const inAll = allCves.find(a => a.cve.id === v.cve.id);
+                    if (inAll) inAll.cve.metrics = fresh.cve.metrics;
+                  }
+                }
+              })
+              .catch(() => { })
+          );
+          await Promise.all(enrichPromises);
+          addLog('SYNC', `CVSS enrichment complete`);
+        }
+
+        // Search Palo Alto PSIRT API for PAN-SA or Palo Alto queries
+        if (isPaloQuery) {
+          addLog('SYNC', `Querying Palo Alto PSIRT for "${query}"...`);
+          try {
+            const paUrl = 'https://security.paloaltonetworks.com/json';
+            let paResp;
+            try {
+              paResp = await fetch(paUrl, { headers: { Accept: 'application/json' } });
+              if (!paResp.ok) throw new Error('direct failed');
+            } catch {
+              paResp = await fetch(proxyUrl(paUrl));
+            }
+            if (paResp.ok) {
+              const paData = await paResp.json();
+              const advisories = Array.isArray(paData) ? paData : [];
+              const localIds = new Set([...cveResults.map(v => v.cve.id), ...apiResults.map(v => v.cve.id)]);
+              const paResults = advisories
+                .filter(a => {
+                  const id = (a.ID || '').toUpperCase();
+                  if (localIds.has(id)) return false;
+                  const title = (a.title || '').toLowerCase();
+                  return id.includes(query.toUpperCase()) || title.includes(queryLower);
+                })
+                .map(a => ({
+                  _source: 'paloalto',
+                  cve: {
+                    id: a.ID.toUpperCase(),
+                    published: a.date || a.updated || '',
+                    descriptions: [{ lang: 'en', value: a.title || 'No description' }],
+                    metrics: a.baseScore ? {
+                      cvssMetricV31: [{ cvssData: { baseScore: parseFloat(a.baseScore) || 0 } }]
+                    } : {},
+                    configurations: (Array.isArray(a.product) ? a.product : []).map(p => ({
+                      nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:paloaltonetworks:${p.toLowerCase().replace(/[^a-z0-9]/g, '_')}:*:*:*` }] }]
+                    }))
+                  }
+                }));
+              apiResults = [...apiResults, ...paResults];
+              addLog('SYNC', `Palo Alto PSIRT returned ${paResults.length} matching advisories`);
+            }
+          } catch (e) {
+            addLog('ALERT', `Palo Alto PSIRT search failed: ${e.message}`);
+          }
+        }
+      } catch (e) {
+        addLog('ALERT', `Live search failed: ${e.message}`);
+      }
+
+      // 4) Render results
+      let html = '';
+      const totalCve = cveResults.length + apiResults.length;
+
+      if (totalCve === 0 && kevResults.length === 0) {
+        html = '<div class="modal-empty">NO RESULTS FOUND</div>';
+      } else {
+        // Merge cached + API results, sort by CVSS (critical first)
+        const allResults = [...cveResults, ...apiResults].sort((a, b) => getCvss(b) - getCvss(a));
+        if (allResults.length > 0) {
+          html += `<div style="padding:10px 24px 4px;font-family:'Barlow Condensed',sans-serif;font-size:10px;letter-spacing:2px;color:var(--amber);text-transform:uppercase">CVEs (${allResults.length} matches — sorted by severity)</div>`;
+          html += allResults.slice(0, 40).map(v => renderCveItem(v)).join('');
+        }
+
+        if (kevResults.length > 0) {
+          html += `<div style="padding:10px 24px 4px;font-family:'Barlow Condensed',sans-serif;font-size:10px;letter-spacing:2px;color:var(--critical);text-transform:uppercase;border-top:1px solid var(--border)">CISA KEV (${kevResults.length} matches)</div>`;
+          html += kevResults.slice(0, 15).map(k => {
+            // Cross-reference with NVD data to get CVSS score
+            const nvdMatch = allCves.find(v => v.cve.id === k.cveID);
+            const score = nvdMatch ? getCvss(nvdMatch) : 0;
+            const sev = score > 0 ? getSeverity(score) : '';
+            const scoreColor = score >= 9 ? 'var(--critical)' : score >= 7 ? 'var(--high)' : score >= 4 ? 'var(--medium)' : 'var(--low)';
+            const scoreHtml = score > 0
+              ? `<span class="severity-badge sev-${sev}">${sev}</span><span class="modal-item-score" style="color:${scoreColor}">${score.toFixed(1)}</span>`
+              : '';
+            return `
+            <div class="modal-item">
+              <div class="modal-item-header">
+                <a href="https://nvd.nist.gov/vuln/detail/${k.cveID}" target="_blank" rel="noopener">${k.cveID}</a>
+                <span class="severity-badge sev-CRITICAL">EXPLOITED</span>
+                ${scoreHtml}
+                <span class="modal-item-date">${k.dateAdded || ''}</span>
+              </div>
+              <div class="modal-item-desc">${k.vulnerabilityName || k.shortDescription || 'No description'}</div>
+              ${k.vendorProject ? `<div style="margin-top:5px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--warn)">⚠ Affected: ${k.vendorProject}${k.product ? ' ' + k.product : ''}</div>` : ''}
+            </div>
+          `;
+          }).join('');
+        }
+      }
+
+      body.innerHTML = html;
+      addLog('SYNC', `Search complete: "${query}" — ${totalCve} CVEs, ${kevResults.length} KEV matches`);
+
+      // Store results and reveal export buttons
+      const allResults = [...cveResults, ...apiResults].sort((a, b) => getCvss(b) - getCvss(a));
+      _lastSearchResults = { query, allResults, kevResults };
+      document.getElementById('export-csv-btn').style.display = 'inline-flex';
+      document.getElementById('export-pdf-btn').style.display = 'inline-flex';
+    }
+
+    // ── Company Profile ───────────────────────────────────
+
+    const COMMON_VENDORS = [
+      'microsoft', 'cisco', 'apache', 'linux', 'google', 'apple', 'oracle',
+      'adobe', 'fortinet', 'palo alto', 'vmware', 'nginx', 'openssl', 'wordpress',
+      'jenkins', 'docker', 'kubernetes', 'python', 'php', 'node', 'java', 'log4j',
+      'atlassian', 'citrix', 'sap', 'ibm', 'juniper', 'f5', 'gitlab', 'confluence'
+    ];
+
+    // In-modal working copy of tech stack (before save)
+    let _modalTechStack = [];
+
+    function loadCompanyProfile() {
+      try {
+        const saved = localStorage.getItem('tw_company_profile');
+        if (saved) {
+          const p = JSON.parse(saved);
+          companyName = p.companyName || '';
+          companyTechStack = Array.isArray(p.companyTechStack) ? p.companyTechStack : [];
+          companyModeActive = !!p.companyModeActive;
+        }
+      } catch (e) { /* ignore parse errors */ }
+      updateCompanyModeUI();
+    }
+
+    function saveCompanyProfile() {
+      companyName = (document.getElementById('company-name-input').value || '').trim();
+      companyTechStack = [..._modalTechStack];
+      companyModeActive = document.getElementById('company-mode-toggle').checked;
+      localStorage.setItem('tw_company_profile', JSON.stringify({ companyName, companyTechStack, companyModeActive }));
+      closeCompanyModal();
+      updateCompanyModeUI();
+      renderCves();
+      renderStats();
+      renderVendorChart();
+      renderDonut();
+      renderAttackGrid();
+      renderEmergingThreats();
+      addLog('SYNC', `Company profile saved: "${companyName || 'unnamed'}" — ${companyTechStack.length} tech(s), mode ${companyModeActive ? 'ON' : 'OFF'}`);
+    }
+
+    function openCompanyModal() {
+      _modalTechStack = [...companyTechStack];
+      document.getElementById('company-name-input').value = companyName;
+      document.getElementById('company-mode-toggle').checked = companyModeActive;
+      renderTechTags();
+      // Render vendor suggestions
+      const suggestEl = document.getElementById('company-suggestions');
+      suggestEl.innerHTML = COMMON_VENDORS.map(v =>
+        `<button class="suggest-tag" onclick="addSuggestTag('${v}')">${v}</button>`
+      ).join('');
+      document.getElementById('company-modal-overlay').classList.add('active');
+    }
+
+    function closeCompanyModal() {
+      document.getElementById('company-modal-overlay').classList.remove('active');
+    }
+
+    function renderTechTags() {
+      const el = document.getElementById('company-tags');
+      if (!el) return;
+      if (_modalTechStack.length === 0) {
+        el.innerHTML = '<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:var(--muted)">No technologies added yet</span>';
+        return;
+      }
+      el.innerHTML = _modalTechStack.map((tag, i) =>
+        `<span class="tech-tag">${tag}<button class="remove-tag" onclick="removeTechTag(${i})" title="Remove">✕</button></span>`
+      ).join('');
+    }
+
+    function addTechTag(event) {
+      if (event) event.preventDefault();
+      const input = document.getElementById('company-tag-input');
+      const raw = input.value.replace(/,$/, '').trim().toLowerCase();
+      if (raw && !_modalTechStack.includes(raw)) {
+        _modalTechStack.push(raw);
+        renderTechTags();
+      }
+      input.value = '';
+      input.focus();
+    }
+
+    function addSuggestTag(vendor) {
+      if (!_modalTechStack.includes(vendor)) {
+        _modalTechStack.push(vendor);
+        renderTechTags();
+      }
+    }
+
+    function removeTechTag(index) {
+      _modalTechStack.splice(index, 1);
+      renderTechTags();
+    }
+
+    function matchesCompanyStack(vuln) {
+      const keywords = companyTechStack;
+      if (!keywords.length) return true;
+      // Check description text
+      const desc = (vuln.cve.descriptions?.find(d => d.lang === 'en')?.value || '').toLowerCase();
+      // Check CPE criteria strings
+      let cpeText = '';
+      try {
+        vuln.cve.configurations?.forEach(c =>
+          c.nodes?.forEach(n =>
+            n.cpeMatch?.forEach(m => { cpeText += ' ' + (m.criteria || ''); })
+          )
+        );
+      } catch (e) { /* ignore */ }
+      cpeText = cpeText.toLowerCase();
+      // Also check vendor/product from affected packages (GitHub/OSV shape)
+      const affectedText = JSON.stringify(vuln.cve.affected || '').toLowerCase();
+      const combined = desc + ' ' + cpeText + ' ' + affectedText;
+      return keywords.some(kw => combined.includes(kw));
+    }
+
+    function updateCompanyModeUI() {
+      const header = document.querySelector('header');
+      const badge = document.getElementById('company-mode-badge');
+      const banner = document.getElementById('profile-active-banner');
+      const pabName = document.getElementById('pab-name');
+      const pabMeta = document.getElementById('pab-meta');
+
+      if (companyName) {
+        pabName.textContent = companyName.toUpperCase();
+        const parts = [];
+        if (companyTechStack.length) parts.push(companyTechStack.length + ' TECH' + (companyTechStack.length !== 1 ? 'S' : ''));
+        if (companyModeActive) parts.push('FILTERED');
+        pabMeta.textContent = parts.join(' · ');
+        banner.style.display = 'flex';
+      } else {
+        banner.style.display = 'none';
+      }
+
+      if (companyModeActive) {
+        header.classList.add('company-mode-active');
+        badge.style.display = '';
+      } else {
+        header.classList.remove('company-mode-active');
+        badge.style.display = 'none';
+      }
+    }
