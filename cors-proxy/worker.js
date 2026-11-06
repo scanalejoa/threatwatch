@@ -18,6 +18,37 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
+// Upstream API hosts the proxy may fetch. A host matches when it equals an
+// entry or is a subdomain of it ("usn.ubuntu.com" matches "ubuntu.com"), so a
+// look-alike such as "evilubuntu.com" does not match "ubuntu.com".
+export const ALLOWED_HOSTS = [
+  'access.redhat.com',
+  'security.paloaltonetworks.com',
+  'tools.cisco.com',
+  'sec.cloudapps.cisco.com',
+  'api.cisco.com',
+  'www.fortiguard.com',
+  'api.github.com',
+  'services.nvd.nist.gov',
+  'www.cisa.gov',
+  'ubuntu.com',
+  'api.msrc.microsoft.com',
+  'api.osv.dev',
+  'api.first.org',
+];
+
+export function isAllowedHost(hostname) {
+  const h = String(hostname || '').toLowerCase().replace(/\.$/, '');
+  return ALLOWED_HOSTS.some(a => h === a || h.endsWith('.' + a));
+}
+
+function jsonError(message, status, allowedOrigin) {
+  return new Response(JSON.stringify({ error: message }), {
+    status,
+    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOrigin, ...CORS_HEADERS },
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
@@ -34,33 +65,18 @@ export default {
     const targetUrl = url.searchParams.get('url');
 
     if (!targetUrl) {
-      return new Response(JSON.stringify({ error: 'Missing ?url= parameter' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOrigin },
-      });
+      return jsonError('Missing ?url= parameter', 400, allowedOrigin);
     }
 
-    // Basic security: only allow known safe API domains
-    const allowed = [
-      'access.redhat.com',
-      'security.paloaltonetworks.com',
-      'tools.cisco.com',
-      'sec.cloudapps.cisco.com',
-      'api.cisco.com',
-      'www.fortiguard.com',
-      'api.github.com',
-      'services.nvd.nist.gov',
-      'www.cisa.gov',
-      'ubuntu.com',
-      'api.msrc.microsoft.com',
-      'api.osv.dev',
-    ];
-    const targetHost = new URL(targetUrl).hostname;
-    if (!allowed.some(h => targetHost.endsWith(h))) {
-      return new Response(JSON.stringify({ error: 'Domain not allowed' }), {
-        status: 403,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOrigin },
-      });
+    // Only proxy to known API hosts, over HTTPS.
+    let target;
+    try {
+      target = new URL(targetUrl);
+    } catch {
+      return jsonError('Invalid url parameter', 400, allowedOrigin);
+    }
+    if (target.protocol !== 'https:' || !isAllowedHost(target.hostname)) {
+      return jsonError('Domain not allowed', 403, allowedOrigin);
     }
 
     try {
@@ -74,7 +90,7 @@ export default {
         },
         ...(isPost ? { body: await request.arrayBuffer() } : {}),
       };
-      const resp = await fetch(targetUrl, fetchInit);
+      const resp = await fetch(target.href, fetchInit);
 
       const body = await resp.arrayBuffer();
       return new Response(body, {
@@ -86,10 +102,7 @@ export default {
         },
       });
     } catch (e) {
-      return new Response(JSON.stringify({ error: e.message }), {
-        status: 502,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': allowedOrigin },
-      });
+      return jsonError(e.message, 502, allowedOrigin);
     }
   },
 };
