@@ -121,3 +121,24 @@ test('HTTP: CORS allowlist, recent endpoint and 404', async () => {
   assert.equal((await get('/nope')).status, 404);
   assert.equal((await get('/v1/health')).status, 200);
 });
+
+test('HTTP: /v1/advisories fills an empty store on first request', async () => {
+  const worker = (await import('../intel-worker/worker.js')).default;
+  const env = { INTEL: memKV() };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async url => {
+    url = String(url);
+    if (url.includes('vulnerability.xml')) return new Response(fx('node-rss.xml'));
+    if (url.includes('november-2026')) return new Response(fx('node-preannounce.html'));
+    if (url.includes('nodejs.org')) return new Response(fx('node-release.html'));
+    if (url.includes('openssh.com')) return new Response(fx('openssh.html'));
+    if (url.includes('php-src')) return new Response(fx('php-ghsa.json'));
+    return new Response('', { status: 404 });
+  };
+  try {
+    const r = await worker.fetch(new Request('https://intel.example/v1/advisories', { headers: { Origin: 'http://localhost:3000' } }), env);
+    const body = JSON.parse(await r.text());
+    assert.equal(body.node.ok, true);
+    assert.ok(env.INTEL.m.has('advisories'), 'stored for the next request');
+  } finally { globalThis.fetch = realFetch; }
+});

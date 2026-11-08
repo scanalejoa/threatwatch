@@ -22,7 +22,11 @@ export default {
       return reply(request, await recentJson(env.INTEL, days));
     }
     if (url.pathname === '/v1/advisories') {
-      return reply(request, (await env.INTEL.get('advisories', 'text')) || '{"updated":""}');
+      let body = await env.INTEL.get('advisories', 'text');
+      if (!body) { // fresh deploy: fill once instead of waiting for the hourly cron (6 subrequests)
+        try { body = JSON.stringify(await refreshAdvisories(env)); } catch { body = '{"updated":""}'; }
+      }
+      return reply(request, body);
     }
     if (url.pathname === '/v1/health') {
       const s = (await env.INTEL.get('state', 'json')) || {};

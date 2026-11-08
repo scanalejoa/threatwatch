@@ -6,7 +6,7 @@ compatibility_date = "2025-09-01"
 # then paste the returned id below.
 [[kv_namespaces]]
 binding = "INTEL"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "159b5562b95446f8a0c3586912dbc1ce"
 
 [triggers]
 # */15 → CVE.org ingestion · :07 hourly → upstream advisories
