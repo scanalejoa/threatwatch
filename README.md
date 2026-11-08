@@ -17,12 +17,21 @@ A ranked to-do list for a security lead: which recent vulnerabilities to fix fir
 
 | Tier | Rule | Suggested SLA |
 |------|------|---------------|
-| **P1 · FIX NOW** | Exploited in the wild (CISA KEV) | Immediately (shows the CISA due date and overdue days) |
-| **P2 · THIS WEEK** | EPSS ≥ 10% — likely exploited within 30 days | 7 days |
+| **P1 · FIX NOW** | Exploited in the wild (CISA KEV, or CISA SSVC "active") | Immediately (shows the CISA due date and overdue days) |
+| **P2 · THIS WEEK** | EPSS ≥ 10%, a **public exploit** (Nuclei template, CISA proof of concept, NVD exploit reference), or a **remote no-login bug in core software** | 7 days |
 | **P3 · THIS MONTH** | CVSS ≥ 9.0, no exploitation signal | 30 days |
-| **P4 · NEXT CYCLE** | CVSS 7.0–8.9, no exploitation signal | Next patch cycle |
+| **P4 · NEXT CYCLE** | CVSS 7.0–8.9, or core software with no score yet (triage) | Next patch cycle |
 
-Inside a tier: known ransomware use first, then EPSS, then CVSS, then newest. Medium/low CVEs with no exploitation signal are left out. Every CVE FIRST scores above 10% is bulk-loaded, so an unscored or medium-severity CVE that attackers are likely to use still lands in P2. Click a tier to filter, a row for full details; export the queue as CSV (rank, SLA, KEV due date, EPSS, CVSS) or PDF. Company mode narrows it to your stack.
+Inside a tier: known ransomware use first, then early warnings, then exploit strength, EPSS, CVSS and newest. Every row says **why** it is there. Medium/low CVEs with no exploitation signal are left out. Every CVE FIRST scores above 10% is bulk-loaded, so an unscored or medium-severity CVE that attackers are likely to use still lands in P2. Click a tier to filter, a row for full details; export the queue as CSV (rank, SLA, KEV due date, EPSS, CVSS) or PDF. Company mode narrows it to your stack.
+
+### Early warning for core software
+AI-assisted research and exploitation shrink the time from disclosure to attack; EPSS and KEV need days to react. So the dashboard also watches:
+
+- **Core software watch** — OpenSSH, Linux kernel, PHP, Node.js, OpenSSL, glibc, sudo, nginx, Apache httpd, curl, xz, systemd (editable in Company Profile, plus your own). Matching is narrow: a WordPress plugin that "requires PHP" is not a PHP bug.
+- **Early warnings** — remote, no-login bugs in core software published in the last 72 h, shown in a banner above the tiers.
+- **Upstream advisories** — Node.js security releases (including pre-announcements: "release on Nov 11, highest severity HIGH"), the OpenSSH security page and PHP's GitHub advisories, often ahead of NVD.
+- **CVE.org feed** — new CVEs minutes after publication with the CNA's score and CISA's SSVC assessment, via the [intel worker](intel-worker/README.md). Unscored Linux kernel CVEs are kept for triage instead of disappearing (distro patch bundles excluded).
+- **Public exploits** — 4,500+ CVEs with a ProjectDiscovery Nuclei template.
 
 ### Threat intelligence
 - **8 live feeds** — NVD, CISA KEV, GitHub Security Advisories, Palo Alto PSIRT, OSV, Ubuntu, Microsoft MSRC, Red Hat. Duplicates are merged: if GitHub or KEV reports a CVE NVD already has, the entry shows both sources and gains any score or KEV status the other feed had.
@@ -73,11 +82,13 @@ threatwatch/
 ├── index.html          # Markup
 ├── css/app.css         # Styles (colour tokens on :root)
 ├── js/
-│   ├── core.js         # Pure helpers: scoring, escaping, merging, sorting, CSV, URL state (unit-tested)
+│   ├── core.js         # Pure helpers: scoring, priority tiers, core-software watch, merging, CSV, URL state (unit-tested)
+│   ├── feeds.js        # Parsers for CVE.org, Node.js, OpenSSH, PHP, Nuclei (shared with the intel worker)
 │   ├── app.js          # Threat-intel dashboard: feeds, rendering, detail panel, EPSS, search, exports
 │   ├── cloudctl.js     # Cloudflare console + Claude agent loop
 │   └── main.js         # Start-up wiring (loaded last)
 ├── favicon.svg
+├── intel-worker/       # Cloudflare Worker: CVE.org early feed + upstream advisories (cron + KV)
 ├── cors-proxy/
 │   ├── worker.js       # Cloudflare Worker CORS proxy (host allowlist)
 │   └── wrangler.toml
@@ -100,6 +111,9 @@ threatwatch/
 | [Microsoft MSRC](https://msrc.microsoft.com/) | `api.msrc.microsoft.com/cvrf/v3.0` | Yes |
 | [Red Hat](https://access.redhat.com/security/data) | `access.redhat.com/hydra/rest/securitydata` | Fallback |
 | [EPSS (FIRST)](https://www.first.org/epss/) | `api.first.org/data/v1/epss` | Fallback |
+| [CVE.org](https://www.cve.org/) (cvelistV5) | intel worker `/v1/recent` | Intel worker |
+| Node.js / OpenSSH / PHP advisories | intel worker `/v1/advisories` | Intel worker, then proxy / direct |
+| [Nuclei templates](https://github.com/projectdiscovery/nuclei-templates) | `raw.githubusercontent.com/…/cves.json` | No (cached 12 h) |
 
 > The NVD API allows 5 requests per 30 seconds without a key, so long ranges load page by page. If NVD is unreachable, the dashboard shows the other feeds and offers clearly labelled demo data.
 
@@ -115,7 +129,11 @@ npx wrangler login    # one-time
 npx wrangler deploy
 ```
 
-**Deployed at:** `threatwatch-cors-proxy.scanalejoa.workers.dev`. Redeploy after changing the allowlist (EPSS needs `api.first.org`).
+**Deployed at:** `threatwatch-cors-proxy.scanalejoa.workers.dev`. Redeploy after changing the allowlist (EPSS needs `api.first.org`; the advisory fallback needs `nodejs.org` and `openssh.com`).
+
+## 🛰️ Intel worker
+
+`intel-worker/` runs on a cron and stores an early-warning feed in Workers KV — see [intel-worker/README.md](intel-worker/README.md) for the one-time deploy (`wrangler kv namespace create INTEL`, then `wrangler deploy`). Without it the dashboard still works: the CVE.ORG pill shows ERR and upstream advisories are fetched from the browser.
 
 ---
 

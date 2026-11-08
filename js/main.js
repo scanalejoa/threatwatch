@@ -10,6 +10,7 @@ addLog('SYNC', 'THREATWATCH initialized — loading security feeds...');
 ['click', 'keydown'].forEach(type => {
   document.getElementById('cve-feed').addEventListener(type, onCveListActivate);
   document.getElementById('prio-list').addEventListener(type, onCveListActivate);
+  document.getElementById('prio-early').addEventListener(type, onCveListActivate);
   document.getElementById('modal-body').addEventListener(type, onCveListActivate);
   document.getElementById('vendor-chart').addEventListener(type, onVendorActivate);
   document.getElementById('attack-grid').addEventListener(type, onCategoryActivate);
@@ -37,6 +38,7 @@ if (initialState.view !== 'priority') showView(initialState.view);
 else setSuggestionsForView('priority');
 if (initialState.cve) openCveDetail(initialState.cve);
 loadHighEpss();
+loadExploitIntel();
 refreshAll();
 
 // Back/forward or a pasted link: re-apply the state

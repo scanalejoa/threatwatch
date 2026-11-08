@@ -104,12 +104,19 @@ let _loadGen = 0;                 // refresh generation — a superseded loadNVD
 const epssCache = new Map();      // CVE id -> { epss, percentile } | null
 let companyTechStack, companyModeActive, watchlist, notifyEnabled; // localStorage: tw_company_profile
 const PREV_VISIT_MS;              // localStorage tw_last_visit, read once → NEW badges
-let prioTierFilter = 'ALL';       // Fix First tier filter: ALL | '1'..'4' (hash: pt)
+let prioTierFilter = 'ALL';       // Fix First tier filter: ALL | '1'..'4' | 'early' (hash: pt)
+let coreWatch;                    // localStorage tw_core_watch { disabled: [keys], extra: [keywords] }
+let exploitIds;                   // Set of CVE ids with a Nuclei template
+let upstreamNotices;              // { upcoming: [Node.js pre-announcements], noCve: [OpenSSH advisories] }
+const INTEL_API;                  // intel worker URL; localStorage tw_intel_url overrides (local dev)
 let _epssBulkState;               // idle | loading | ok | failed — bulk EPSS ≥10% set from FIRST
 let _feedsLoading;                // true from refreshAll() until every feed has finished
 ```
 
-Each entry may carry `_source`, `_kevExploited`, `_kev` (KEV record: dateAdded, dueDate, requiredAction…), `_alsoIn` (other sources that reported the same CVE) and `_demo`.
+Each entry may carry `_source`, `_kevExploited`, `_kev` (KEV record: dateAdded, dueDate, requiredAction…), `_alsoIn` (other sources that reported the same CVE), `_ssvc` (CISA SSVC from CVE.org: `{e, a, t}`), `_upstream` (`{product, severity, link}`), `cve._affected` / `cve._cna` (CVE.org products / assigner) and `_demo`. `mergeCves()` copies `_ssvc`, `_upstream` and `_affected` onto an existing entry.
+
+### Intel worker (intel-worker/)
+`worker.js` exports only the default handler (the runtime rejects other exports); logic is in `lib.js`. Cron `*/15` → `ingestCveOrg` (deltaLog Range read, ≤ 40 records/run, day shards `day:YYYY-MM-DD` in KV `INTEL`, `index`, `state.cursor`); cron `7 * * * *` → `refreshAdvisories`. Free-plan limits drive the design (≤ 50 subrequests, low CPU). Don't put `*/` inside a block comment.
 
 ### CLOUDCTL integration (sessionStorage; cleared on tab close)
 ```js
@@ -146,7 +153,11 @@ Line numbers drift; search by name.
 | `renderPriority()` | app.js | Fix First view: tier tiles (also the filter), ranked queue, EPSS/KEV cells; called from `renderNow()` and after EPSS arrives |
 | `loadHighEpss()` | app.js | Once per session: every CVE with EPSS ≥ 10% (~17k, `epss-gt` paged by 5000) into `epssCache`. A CVE absent from it is known to be < 10% |
 | `exportPriorityCSV()` / `exportPriorityPDF()` / `priorityContextForAi()` | app.js | Ranked-list exports and the top-10 summary in the AI system prompt |
-| `priorityTier()` / `rankByPriority()` | core.js | P1 = KEV, P2 = EPSS ≥ `EPSS_URGENT` (0.1), P3 = CVSS ≥ 9, P4 = CVSS 7–8.9, else 0. Order within a tier: ransomware Known → EPSS → CVSS → newest |
+| `prioritySignals()` / `rankByPriority()` | core.js | P1 = KEV or SSVC active · P2 = EPSS ≥ 0.1, public exploit, or core software + AV:N/PR:N (or SSVC automatable) · P3 = CVSS ≥ 9 · P4 = CVSS 7–8.9 or core + unscored (not distro-only). `early` = core + remote + < 72 h. Order: ransomware → early → exploit strength → EPSS → CVSS → newest. Returns `reasons[]` shown as "Why:" |
+| `coreSoftwareOf()` / `CORE_SOFTWARE` | core.js | Core-software match by CPE, package name or narrow description regex; `coreOf(v)` in app.js memoises it (bump `_coreVer` when the watch list or data changes) |
+| `loadCveOrg()` / `loadUpstream()` / `loadExploitIntel()` | app.js | Intel worker `/v1/recent` (source `cveorg`) and `/v1/advisories` (source `upstream`, falls back to `fetchAdvisoriesDirect()`); Nuclei ids cached in `tw_exploit_ids` |
+| `renderEarlyPanel()` | app.js | Early-warning banner: early CVEs + `upstreamNotices` (Node.js pre-announcements, OpenSSH advisories without CVE) |
+| `js/feeds.js` | — | Pure parsers shared with `intel-worker/lib.js` (worker imports it as CommonJS) |
 | `getCvss()` | core.js | v4.0→v3.1→v3.0→v2.0; Primary (NVD) preferred over Secondary (CNA); 0 = unscored |
 | `mergeCves()` | core.js | Dedupe by id; duplicates enrich the existing entry (CVSS, KEV, `_alsoIn`) |
 | `classifyOwaspApi()` | app.js | Client-side OWASP API Top 10 classifier |

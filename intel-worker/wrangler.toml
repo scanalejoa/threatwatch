@@ -1,0 +1,13 @@
+name = "threatwatch-intel"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+
+# Create once with:  npx wrangler kv namespace create INTEL
+# then paste the returned id below.
+[[kv_namespaces]]
+binding = "INTEL"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[triggers]
+# */15 → CVE.org ingestion · :07 hourly → upstream advisories
+crons = ["*/15 * * * *", "7 * * * *"]

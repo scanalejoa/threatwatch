@@ -214,3 +214,89 @@ test('hash state: priority is the default view and pt filters tiers', () => {
   assert.equal(core.parseHashState('#pt=9').pt, 'ALL');
   assert.equal(core.buildHashState({ ...core.parseHashState(''), pt: '1' }), '#pt=1');
 });
+
+const withVector = (id, score, vector, extra = {}) => ({
+  _source: 'nvd', ...extra,
+  cve: { id, published: extra.published || '2026-11-07T10:00:00.000', descriptions: [{ lang: 'en', value: extra.desc || 'x' }],
+    metrics: score ? { cvssMetricV31: [{ type: 'Secondary', cvssData: { baseScore: score, vectorString: vector, version: '3.1' } }] } : {},
+    references: extra.refs || [], configurations: extra.cpe ? [{ nodes: [{ cpeMatch: [{ criteria: `cpe:2.3:a:${extra.cpe}:*:*:*` }] }] }] : [],
+    ...(extra.affected ? { _affected: extra.affected } : {}) },
+});
+
+test('coreSoftwareOf matches core packages narrowly', () => {
+  const of = v => core.coreSoftwareOf(v);
+  assert.equal(of(withVector('a', 8, '', { cpe: 'openbsd:openssh' })), 'OpenSSH');
+  assert.equal(of(withVector('b', 0, '', { desc: 'In the Linux kernel, the following vulnerability has been resolved: net: fix UAF' })), 'Linux kernel');
+  assert.equal(of(withVector('c', 0, '', { affected: ['linux'] })), 'Linux kernel', 'Ubuntu/CNA package name');
+  assert.equal(of(withVector('d', 9, '', { desc: 'In PHP versions 8.3.* before 8.3.20, a crafted request…' })), 'PHP');
+  assert.equal(of(withVector('e', 9, '', { desc: 'The Foo plugin for WordPress (requires PHP 7.4) allows SQL injection' })), null, 'WordPress plugin is not PHP itself');
+  assert.equal(of(withVector('f', 7, '', { desc: 'lodash-like Node.js library allows prototype pollution' })), null, 'npm package is not Node.js runtime');
+  assert.equal(of({ ...withVector('g', 7, ''), _upstream: { product: 'Node.js' } }), 'Node.js');
+  assert.equal(core.coreSoftwareOf(withVector('h', 8, '', { cpe: 'openbsd:openssh' }), ['openssh']), null, 'built-in can be switched off');
+  assert.equal(core.coreSoftwareOf(withVector('i', 8, '', { desc: 'Bug in FooCorp Gateway' }), [], ['foocorp']), 'foocorp', 'user keyword');
+});
+
+test('prioritySignals: public exploits, SSVC, core remote bugs and early warning', () => {
+  const now = Date.parse('2026-11-08T10:00:00Z');
+  const ctx = { core: v => core.coreSoftwareOf(v), exploitIds: new Set(['CVE-NUC']), now };
+  const sig = v => core.prioritySignals(v, ctx);
+
+  assert.equal(sig({ ...withVector('CVE-A', 5, ''), _ssvc: { e: 'active' } }).tier, 1, 'CISA SSVC active = exploited');
+  assert.equal(sig(withVector('CVE-NUC', 6.1, '')).tier, 2, 'nuclei template = public exploit');
+  assert.equal(sig(withVector('CVE-NVD', 6.1, '', { refs: [{ url: 'https://x', tags: ['Exploit'] }] })).exploit, 'nvd');
+  assert.equal(sig({ ...withVector('CVE-POC', 6.1, ''), _ssvc: { e: 'poc' } }).tier, 2);
+
+  const sshRemote = withVector('CVE-SSH', 8.1, 'CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H', { cpe: 'openbsd:openssh', published: '2026-11-07T10:00:00.000' });
+  const s = sig(sshRemote);
+  assert.equal(s.tier, 2);
+  assert.equal(s.early, true, 'core + remote + 24h old');
+  assert.ok(s.reasons.some(r => /Remote, no auth, in OpenSSH/.test(r)));
+  assert.equal(sig({ ...sshRemote, cve: { ...sshRemote.cve, published: '2026-11-01T00:00:00.000' } }).early, false, 'older than 72h');
+
+  const local = withVector('CVE-SSH-L', 7.0, 'CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H', { cpe: 'openbsd:openssh' });
+  assert.equal(sig(local).tier, 4, 'local core bug stays on CVSS');
+
+  const kernel = withVector('CVE-K', 0, '', { desc: 'In the Linux kernel, the following vulnerability has been resolved' });
+  const k = sig(kernel);
+  assert.equal(k.tier, 4, 'unscored kernel CVE goes to triage instead of vanishing');
+  assert.match(k.reasons[0], /Linux kernel, not scored yet/);
+  assert.equal(core.prioritySignals(kernel, {}).tier, 0, 'without the core watch it is dropped (old behaviour)');
+});
+
+test('rankByPriority puts early warnings first inside a tier', () => {
+  const now = Date.parse('2026-11-08T10:00:00Z');
+  const vec = 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H';
+  const oldCore = withVector('old-core', 9.8, vec, { cpe: 'openbsd:openssh', published: '2026-11-01T00:00:00.000' });
+  const newCore = withVector('new-core', 7.5, vec, { cpe: 'openbsd:openssh', published: '2026-11-08T00:00:00.000' });
+  const rows = core.rankByPriority([oldCore, newCore], () => undefined, { core: v => core.coreSoftwareOf(v), now });
+  assert.deepEqual(rows.map(r => [r.v.cve.id, r.tier, r.early]), [['new-core', 2, true], ['old-core', 2, false]]);
+});
+
+test('mergeCves carries SSVC, upstream and CVE.org products onto an existing entry', () => {
+  const nvd = withVector('CVE-M', 9.8, '');
+  const fromOrg = { ...withVector('CVE-M', 0, '', { affected: ['openssh'] }), _source: 'cveorg', _ssvc: { e: 'poc', a: 'yes' } };
+  const fromUp = { ...withVector('CVE-M', 0, ''), _source: 'upstream', _upstream: { product: 'OpenSSH' } };
+  const r = core.mergeCves([nvd], [fromOrg, fromUp]);
+  assert.equal(r.list.length, 1);
+  assert.deepEqual(r.list[0]._ssvc, { e: 'poc', a: 'yes' });
+  assert.equal(r.list[0]._upstream.product, 'OpenSSH');
+  assert.deepEqual(r.list[0].cve._affected, ['openssh']);
+  assert.deepEqual(r.list[0]._alsoIn, ['cveorg', 'upstream']);
+});
+
+test('distro patch bundles do not flood the kernel triage tier', () => {
+  const ctx = { core: v => core.coreSoftwareOf(v) };
+  const kernelDesc = { desc: 'In the Linux kernel, the following vulnerability has been resolved' };
+  const ubuntu = { ...withVector('CVE-U', 0, '', kernelDesc), _source: 'ubuntu' };
+  assert.equal(core.prioritySignals(ubuntu, ctx).tier, 0, 'Ubuntu-only kernel CVE is not triage');
+  assert.equal(core.prioritySignals({ ...ubuntu, _alsoIn: ['cveorg'] }, ctx).tier, 4, 'also reported by CVE.org → triage');
+  assert.equal(core.prioritySignals(withVector('CVE-N', 0, '', kernelDesc), ctx).tier, 4, 'NVD kernel CVE → triage');
+});
+
+test('within P2, a Nuclei template outranks an NVD exploit reference', () => {
+  const rows = core.rankByPriority([
+    withVector('CVE-REF', 9.8, '', { refs: [{ url: 'https://x', tags: ['Exploit'] }] }),
+    withVector('CVE-NUC', 6.5, ''),
+  ], () => undefined, { exploitIds: new Set(['CVE-NUC']) });
+  assert.deepEqual(rows.map(r => r.v.cve.id), ['CVE-NUC', 'CVE-REF']);
+});

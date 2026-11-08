@@ -38,3 +38,10 @@ test('proxy forwards allowed targets and adds CORS headers', async (t) => {
   assert.equal(r.headers.get('Access-Control-Allow-Origin'), 'http://localhost:3000');
   assert.deepEqual(calls, ['https://api.first.org/data/v1/epss?cve=CVE-2024-3400']);
 });
+
+test('proxy allows the upstream advisory hosts used as fallback', async () => {
+  const { isAllowedHost } = await load();
+  assert.equal(isAllowedHost('nodejs.org'), true);
+  assert.equal(isAllowedHost('www.openssh.com'), true);
+  assert.equal(isAllowedHost('evilnodejs.org'), false);
+});

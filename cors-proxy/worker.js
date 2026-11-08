@@ -35,6 +35,8 @@ export const ALLOWED_HOSTS = [
   'api.msrc.microsoft.com',
   'api.osv.dev',
   'api.first.org',
+  'nodejs.org',        // Node.js security-release posts (fallback when the intel worker is down)
+  'openssh.com',       // OpenSSH security page (fallback)
 ];
 
 export function isAllowedHost(hostname) {

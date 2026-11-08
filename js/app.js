@@ -27,6 +27,11 @@ let companyTechStack = [];          // lowercase keywords; filters the dashboard
 let companyModeActive = false;
 let watchlist = [];                 // lowercase keywords; highlighted, never filtered out
 let notifyEnabled = false;
+let coreWatch = { disabled: [], extra: [] };   // localStorage tw_core_watch — built-ins switched off + own keywords
+let _coreVer = 1;                              // bump to invalidate the per-entry core-software memo
+let exploitIds = new Set();                    // CVE ids with a public Nuclei exploit template
+let _exploitState = 'idle';                    // idle | loading | ok | failed
+let upstreamNotices = { upcoming: [], noCve: [] }; // announced security releases / advisories without a CVE yet
 
 // ── Safe storage (private windows can throw) ──
 function lsGet(key, fallback = null) {
@@ -243,7 +248,7 @@ function resetSourcePills() {
 }
 
 async function loadExternalSources() {
-  await Promise.allSettled([loadKEV(), loadGitHub(), loadPaloAlto(), loadOSV(), loadUbuntu(), loadMSRC(), loadRedHat()]);
+  await Promise.allSettled([loadKEV(), loadGitHub(), loadPaloAlto(), loadOSV(), loadUbuntu(), loadMSRC(), loadRedHat(), loadCveOrg(), loadUpstream()]);
   updateRangeInfo();
   queueEpssBackground();
   checkAlerts();
@@ -617,6 +622,108 @@ async function fetchViaProxy(target, init) {
   }
 }
 
+// ── Intel worker (intel-worker/): CVE.org early feed + upstream advisories ──
+// Override for local testing: localStorage.setItem('tw_intel_url', 'http://localhost:8787')
+const INTEL_API = lsGet('tw_intel_url', '') || 'https://threatwatch-intel.scanalejoa.workers.dev';
+
+async function loadCveOrg() {
+  const days = currentRangeDays > 0 ? Math.min(14, currentRangeDays) : 14;
+  addLog('SYNC', 'Fetching new CVEs from CVE.org (intel worker)...');
+  try {
+    const r = await fetch(`${INTEL_API}/v1/recent?days=${days}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const entries = (data.cves || []).map(cveOrgToEntry);
+    addLog('CVE', `CVE.org loaded — ${entries.length} CVEs published in the last ${days} days${data.lastRun ? ` (worker ran ${new Date(data.lastRun).toLocaleTimeString()})` : ''}`);
+    mergeExternalCves(entries, 'cveorg');
+  } catch (e) {
+    addLog('ALERT', `CVE.org early-warning feed unavailable (${e.message}) — deploy intel-worker/ (see its README)`);
+    setSourceStatus('cveorg', false);
+  }
+}
+
+/** Same jobs as the worker's refreshAdvisories(), run in the browser when the worker is unreachable. */
+async function fetchAdvisoriesDirect() {
+  const out = {};
+  const text = async (url, viaProxy) => {
+    const r = viaProxy ? await fetchViaProxy(url) : await fetch(url);
+    if (!r.ok) throw new Error(`${new URL(url).hostname} HTTP ${r.status}`);
+    return r.text();
+  };
+  const settle = async (key, fn) => {
+    try { out[key] = { ok: true, ...(await fn()) }; } catch (e) { out[key] = { ok: false, error: e.message, items: [] }; }
+  };
+  const cutoff = Date.now() - 120 * 86400000;
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  await Promise.all([
+    settle('node', async () => {
+      const items = parseNodeRss(await text('https://nodejs.org/en/feed/vulnerability.xml', true)).filter(i => parseFeedDate(i.date) > cutoff).slice(0, 3);
+      const posts = await Promise.all(items.map(async i => ({ i, p: parseNodePost(await text(i.link, true), i) })));
+      return {
+        items: posts.flatMap(({ i, p }) => p.cves.map(c => ({ ...c, date: i.date, link: i.link }))),
+        upcoming: posts.map(x => x.p.upcoming).filter(u => u && u.releaseDate >= yesterday),
+      };
+    }),
+    settle('openssh', async () => ({ items: parseOpensshSecurity(await text('https://www.openssh.com/security.html', true)).slice(0, 10) })),
+    settle('php', async () => ({ items: parsePhpAdvisories(JSON.parse(await text('https://api.github.com/repos/php/php-src/security-advisories?per_page=30', false))) })),
+  ]);
+  return out;
+}
+
+async function loadUpstream() {
+  addLog('SYNC', 'Fetching upstream advisories (Node.js, OpenSSH, PHP)...');
+  let adv = null, via = 'intel worker';
+  try {
+    const r = await fetch(`${INTEL_API}/v1/advisories`);
+    if (r.ok) { adv = await r.json(); if (!adv.updated) adv = null; }
+  } catch { /* fall back below */ }
+  if (!adv) { via = 'direct'; adv = await fetchAdvisoriesDirect(); }
+
+  const entries = [], failed = [];
+  for (const [key, product] of [['node', 'Node.js'], ['openssh', 'OpenSSH'], ['php', 'PHP']]) {
+    const src = adv[key];
+    if (!src) continue;
+    if (src.ok === false) failed.push(`${product}: ${src.error}`);
+    for (const a of src.items || []) {
+      if (key === 'openssh') (a.cves || []).forEach(id => entries.push(upstreamToEntry({ id, title: a.title, desc: `${a.versions}. ${a.text}`, date: a.date, link: a.link }, product)));
+      else entries.push(upstreamToEntry(a, product));
+    }
+  }
+  upstreamNotices = {
+    upcoming: adv.node?.upcoming || [],
+    noCve: (adv.openssh?.items || []).filter(a => !(a.cves || []).length && parseFeedDate(a.date) > Date.now() - 30 * 86400000),
+  };
+  if (failed.length) addLog('ALERT', `Upstream advisories partly unavailable — ${failed.join('; ')}`);
+  upstreamNotices.upcoming.forEach(u => addLog('ALERT', `Upcoming ${u.product} security release on ${u.releaseDate} — highest severity ${u.severity || 'unknown'} (${u.lines.join(', ')})`));
+  if (failed.length >= 3) { setSourceStatus('upstream', false); renderPriority(); return; }
+  addLog('CVE', `Upstream advisories loaded via ${via} — ${entries.length} CVEs`);
+  mergeExternalCves(entries, 'upstream');
+}
+
+/** Public exploit index: CVEs with a ProjectDiscovery Nuclei template (cached 12 h). */
+async function loadExploitIntel() {
+  const cached = lsGetJson('tw_exploit_ids', null);
+  if (cached && Array.isArray(cached.ids) && Date.now() - cached.t < 12 * 3600000) {
+    exploitIds = new Set(cached.ids); _exploitState = 'ok'; renderAll(); return;
+  }
+  _exploitState = 'loading';
+  try {
+    const r = await fetch('https://raw.githubusercontent.com/projectdiscovery/nuclei-templates/main/cves.json');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const ids = parseNucleiIds(await r.text());
+    if (!ids.length) throw new Error('empty list');
+    exploitIds = new Set(ids);
+    _exploitState = 'ok';
+    lsSet('tw_exploit_ids', JSON.stringify({ t: Date.now(), ids }));
+    addLog('SYNC', `Exploit intel: ${ids.length.toLocaleString()} CVEs have a public Nuclei exploit template`);
+  } catch (e) {
+    _exploitState = 'failed';
+    if (cached?.ids) exploitIds = new Set(cached.ids);
+    addLog('ALERT', `Exploit intel unavailable (${e.message})${cached?.ids ? ' — using the cached list' : ''}`);
+  }
+  renderAll();
+}
+
 // ── GitHub Security Advisories ─────────────────────────
 let githubCves = [];
 async function loadGitHub() {
@@ -972,6 +1079,7 @@ function mergeExternalCves(incoming, src, fetchedTotal) {
     inRange: _currentLoadKeyword ? null : inSelectedRange, // keyword searches already scope by date in NVD
   });
   allCves = r.list;
+  if (r.enriched || r.list.length !== r.added.length) _coreVer++; // merged fields can change the core-software match
   // Pill count = this source's entries in range, including ones merged into an existing CVE
   const inRangeCount = incoming.filter(v => _currentLoadKeyword ? matchesKeyword(v, _currentLoadKeyword) : inSelectedRange(v)).length;
   if (src) setSourceStatus(src, true, inRangeCount, fetchedTotal ?? incoming.length);
@@ -1074,7 +1182,12 @@ function fmtEpss(p) {
 
 function badgesHtml(v) {
   const owasp = classifyOwaspApi(v);
+  const core = coreOf(v);
+  const exploit = publicExploitSource(v, exploitIds);
   return (v._kevExploited ? '<span class="kev-tag" title="Listed in CISA Known Exploited Vulnerabilities">⚡EXPLOITED</span>' : '')
+    + (!v._kevExploited && v._ssvc?.e === 'active' ? '<span class="kev-tag" title="CISA SSVC: exploitation active">⚡CISA: ACTIVE</span>' : '')
+    + (exploit ? `<span class="exploit-tag" title="${escapeHtml(EXPLOIT_LABEL[exploit])}">PUBLIC EXPLOIT</span>` : '')
+    + (core ? `<span class="core-tag" title="Core software watch">CORE · ${escapeHtml(core)}</span>` : '')
     + (isNewSince(v, PREV_VISIT_MS) ? '<span class="new-tag" title="Published or added to KEV since your last visit">NEW</span>' : '')
     + (watchlist.length && matchesAnyKeyword(v, watchlist) ? '<span class="watch-tag" title="Matches your watchlist">WATCH</span>' : '')
     + (v._demo ? '<span class="demo-tag">DEMO</span>' : '')
@@ -1575,8 +1688,16 @@ const TIER_COLOR = { 1: 'var(--critical)', 2: 'var(--high)', 3: 'var(--medium)',
 
 /** Ranked rows for the active data set (company mode respected). */
 function getPriorityRows() {
-  return rankByPriority(getActiveCves(), id => epssCache.get(id)?.epss);
+  return rankByPriority(getActiveCves(), id => epssCache.get(id)?.epss, prioCtx());
 }
+
+/** Core-software label for an entry, memoised until the watch list or data changes. */
+function coreOf(v) {
+  if (v._coreVer !== _coreVer) { v._core = coreSoftwareOf(v, coreWatch.disabled, coreWatch.extra); v._coreVer = _coreVer; }
+  return v._core;
+}
+function prioCtx() { return { core: coreOf, exploitIds, now: Date.now() }; }
+const EXPLOIT_LABEL = { nuclei: 'Public exploit (Nuclei template)', ssvc: 'CISA SSVC: proof of concept public', nvd: 'Exploit referenced by NVD' };
 
 function setPrioTier(t) {
   prioTierFilter = prioTierFilter === String(t) ? 'ALL' : String(t);
@@ -1606,6 +1727,7 @@ function prioEpssCell(r) {
 }
 
 function prioKevCell(v) {
+  if (!v._kevExploited && v._ssvc?.e === 'active') return '<span class="kev-tag" title="CISA SSVC: exploitation active (not yet in KEV)">⚡CISA: ACTIVE</span>';
   if (!v._kevExploited) return '<span class="prio-dim">—</span>';
   const k = v._kev || {};
   const due = daysUntil(k.dueDate);
@@ -1634,7 +1756,10 @@ function prioRowHtml(r, rank) {
   const desc = getDescription(v) || 'No description';
   const short = desc.length > 130 ? desc.slice(0, 130) + '…' : desc;
   const vendor = prioVendorText(v);
-  const tags = (isNewSince(v, PREV_VISIT_MS) ? '<span class="new-tag">NEW</span>' : '')
+  const tags = (r.early ? '<span class="early-tag" title="Remote, no-auth bug in core software, under 72 h old">EARLY WARNING</span>' : '')
+    + (r.core ? `<span class="core-tag" title="Core software watch">CORE · ${escapeHtml(r.core)}</span>` : '')
+    + (r.exploit ? `<span class="exploit-tag" title="${escapeHtml(EXPLOIT_LABEL[r.exploit])}">PUBLIC EXPLOIT</span>` : '')
+    + (isNewSince(v, PREV_VISIT_MS) ? '<span class="new-tag">NEW</span>' : '')
     + (watchlist.length && matchesAnyKeyword(v, watchlist) ? '<span class="watch-tag">WATCH</span>' : '')
     + (v._demo ? '<span class="demo-tag">DEMO</span>' : '');
   return `
@@ -1645,10 +1770,11 @@ function prioRowHtml(r, rank) {
       <span class="prio-id">${id}</span>${tags}
       ${vendor ? `<span class="prio-vendor">${escapeHtml(vendor)}</span>` : ''}
       <span class="prio-desc">${escapeHtml(short)}</span>
+      <span class="prio-why">Why: ${escapeHtml(r.reasons.join(' · '))}</span>
     </span>
     <span class="prio-kev" role="cell"><span class="prio-mlabel">KEV</span>${prioKevCell(v)}</span>
     <span role="cell"><span class="prio-mlabel">EPSS</span>${prioEpssCell(r)}</span>
-    <span class="prio-cvss" role="cell"><span class="prio-mlabel">CVSS</span><b style="color:${SEV_COLOR[sev]}">${r.cvss > 0 ? r.cvss.toFixed(1) : '—'}</b><small>${sev === 'UNSCORED' ? 'no score' : sev}</small></span>
+    <span class="prio-cvss" role="cell"><span class="prio-mlabel">CVSS</span><b style="color:${SEV_COLOR[sev]}">${r.cvss > 0 ? r.cvss.toFixed(1) : '—'}</b><small>${sev === 'UNSCORED' ? (v._upstream?.severity ? 'vendor: ' + escapeHtml(v._upstream.severity) : 'no score') : sev}</small></span>
     <span class="prio-age" role="cell" title="${v._kev?.dateAdded ? 'Added to KEV ' + escapeHtml(v._kev.dateAdded) : 'Published ' + escapeHtml((v.cve.published || '').slice(0, 10))}"><span class="prio-mlabel">AGE</span>${fmtAge(r.t)}</span>
   </div>`;
 }
@@ -1686,20 +1812,28 @@ function renderPriority() {
   }
 
   const st = document.getElementById('prio-epss-status');
-  st.textContent = {
-    idle: '', loading: 'Loading EPSS scores from FIRST…',
-    ok: `EPSS: ${_epssBulkCount.toLocaleString()} high-probability CVEs loaded.`,
+  const parts = [{
+    idle: '', loading: 'EPSS loading…',
+    ok: `EPSS: ${_epssBulkCount.toLocaleString()} high-probability CVEs.`,
     failed: 'EPSS bulk load failed — P2 may be incomplete.',
-  }[_epssBulkState];
-  st.classList.toggle('warn', _epssBulkState === 'failed');
+  }[_epssBulkState], {
+    idle: '', loading: 'Exploit intel loading…',
+    ok: `Public exploits: ${exploitIds.size.toLocaleString()} known.`,
+    failed: exploitIds.size ? `Public exploits: ${exploitIds.size.toLocaleString()} (cached).` : 'Exploit intel unavailable.',
+  }[_exploitState]];
+  if (sourceStats.cveorg) parts.push(sourceStats.cveorg.ok ? 'CVE.org early feed: live.' : 'CVE.org early feed: unavailable (intel worker).');
+  st.textContent = parts.filter(Boolean).join(' ');
+  st.classList.toggle('warn', _epssBulkState === 'failed' || (sourceStats.cveorg && !sourceStats.cveorg.ok));
+  renderEarlyPanel(rows);
 
   const shown = prioritySelection(rows);
-  const tierInfo = prioTierFilter !== 'ALL' ? PRIORITY_TIERS[Number(prioTierFilter) - 1] : null;
-  document.getElementById('prio-list-title').textContent = tierInfo ? `Remediation queue — ${tierInfo.key} ${tierInfo.label}` : 'Remediation queue';
+  const tierInfo = /^[1-4]$/.test(prioTierFilter) ? PRIORITY_TIERS[Number(prioTierFilter) - 1] : null;
+  document.getElementById('prio-list-title').textContent = tierInfo ? `Remediation queue — ${tierInfo.key} ${tierInfo.label}`
+    : prioTierFilter === 'early' ? 'Remediation queue — early warnings' : 'Remediation queue';
   document.getElementById('prio-count').textContent = shown.length ? `${Math.min(_prioLimit, shown.length).toLocaleString()} of ${shown.length.toLocaleString()}` : '';
 
   if (!shown.length) {
-    list.innerHTML = `<div class="error-msg">${!allCves.length ? 'LOADING…' : tierInfo ? `NOTHING IN ${tierInfo.key} FOR THIS RANGE` : 'NO CVE IN THIS RANGE NEEDS SCHEDULED ACTION'}</div>`;
+    list.innerHTML = `<div class="error-msg">${!allCves.length ? 'LOADING…' : tierInfo ? `NOTHING IN ${tierInfo.key} FOR THIS RANGE` : prioTierFilter === 'early' ? 'NO EARLY WARNINGS RIGHT NOW' : 'NO CVE IN THIS RANGE NEEDS SCHEDULED ACTION'}</div>`;
     document.getElementById('prio-more').innerHTML = '';
     return;
   }
@@ -1713,8 +1847,48 @@ function renderPriority() {
   queueEpssFor(page.map(r => r.v));
 }
 
+function fmtHoursAgo(ms) {
+  const h = Math.max(0, Math.round((Date.now() - ms) / 3600000));
+  return h < 1 ? 'just now' : h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+}
+
+/** Banner above the tiers: early-warning CVEs and announced upstream security releases. */
+function renderEarlyPanel(rows) {
+  const el = document.getElementById('prio-early');
+  if (!el) return;
+  const early = rows.filter(r => r.early);
+  const up = upstreamNotices.upcoming || [];
+  const noCve = upstreamNotices.noCve || [];
+  if (!early.length && !up.length && !noCve.length) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  const fmtDay = d => new Date(d + 'T12:00:00Z').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  const items = [
+    ...up.map(u => `<div class="early-item upcoming">
+        <span class="early-kind">UPCOMING RELEASE</span>
+        <span><b>${escapeHtml(u.product)} security release ${escapeHtml(fmtDay(u.releaseDate))}</b> — highest severity <b>${escapeHtml(u.severity || '?')}</b>, lines ${escapeHtml((u.lines || []).join(', '))}. CVE details are published on release day: plan the patch window now.
+        <a href="${escapeHtml(safeUrl(u.link))}" target="_blank" rel="noopener">advisory ↗</a></span></div>`),
+    ...noCve.map(a => `<div class="early-item upcoming">
+        <span class="early-kind">OPENSSH ADVISORY</span>
+        <span><b>${escapeHtml(a.title)}</b> — ${escapeHtml(a.versions)} (${escapeHtml(a.date.slice(0, 10))}, no CVE yet)
+        <a href="${escapeHtml(safeUrl(a.link))}" target="_blank" rel="noopener">release notes ↗</a></span></div>`),
+    ...early.slice(0, 5).map(r => `<div class="early-item cve" role="button" tabindex="0" data-cve-id="${escapeHtml(r.v.cve.id)}">
+        <span class="early-kind">EARLY WARNING</span>
+        <span><b class="prio-id">${escapeHtml(r.v.cve.id)}</b> <span class="core-tag">CORE · ${escapeHtml(r.core)}</span>
+        ${escapeHtml(r.reasons.join(' · '))} · published ${escapeHtml(fmtHoursAgo(parseFeedDate(r.v.cve.published)))}</span></div>`),
+  ];
+  el.innerHTML = `
+    <div class="prio-early-head">
+      <span class="prio-early-title">⚠ EARLY WARNING</span>
+      <span class="prio-early-sub">Remote, no-login bugs in core software from the last ${EARLY_WARNING_HOURS} h, and announced security releases. EPSS and KEV take days to react; AI-assisted attackers do not.</span>
+      ${early.length ? `<button class="ftab${prioTierFilter === 'early' ? ' active' : ''}" onclick="setPrioTier('early')">${prioTierFilter === 'early' ? 'SHOW FULL QUEUE' : `SHOW ALL ${early.length} EARLY WARNING${early.length !== 1 ? 'S' : ''}`}</button>` : ''}
+    </div>
+    ${items.join('')}`;
+}
+
 function prioritySelection(all = getPriorityRows()) {
-  return prioTierFilter === 'ALL' ? all : all.filter(r => String(r.tier) === prioTierFilter);
+  if (prioTierFilter === 'ALL') return all;
+  if (prioTierFilter === 'early') return all.filter(r => r.early);
+  return all.filter(r => String(r.tier) === prioTierFilter);
 }
 
 function exportPriorityCSV() {
@@ -1722,12 +1896,13 @@ function exportPriorityCSV() {
   const rows = prioritySelection(all);
   if (!rows.length) return;
   const rankOf = new Map(all.map((r, i) => [r, i + 1]));
-  const header = ['Rank', 'Priority', 'Suggested SLA', 'CVE ID', 'Vendor / product', 'KEV', 'KEV due date', 'Ransomware use', 'EPSS', 'EPSS percentile', 'CVSS', 'Severity', 'Published', 'Description'];
+  const header = ['Rank', 'Priority', 'Suggested SLA', 'Why', 'CVE ID', 'Vendor / product', 'Core software', 'Early warning', 'Public exploit', 'KEV', 'KEV due date', 'Ransomware use', 'CISA SSVC exploitation', 'EPSS', 'EPSS percentile', 'CVSS', 'Severity', 'Published', 'Description'];
   const data = rows.map(r => {
     const t = PRIORITY_TIERS[r.tier - 1];
     const e = epssCache.get(r.v.cve.id);
     const k = r.v._kev || {};
-    return [rankOf.get(r), `${t.key} ${t.label}`, t.sla, r.v.cve.id, prioVendorText(r.v), r.v._kevExploited ? 'Yes' : 'No', k.dueDate || '', k.knownRansomwareCampaignUse || '',
+    return [rankOf.get(r), `${t.key} ${t.label}`, t.sla, r.reasons.join(' · '), r.v.cve.id, prioVendorText(r.v), r.core || '', r.early ? 'Yes' : '', r.exploit ? EXPLOIT_LABEL[r.exploit] : '',
+      r.v._kevExploited ? 'Yes' : 'No', k.dueDate || '', k.knownRansomwareCampaignUse || '', r.v._ssvc?.e || '',
       e ? e.epss.toFixed(4) : '', e ? e.percentile.toFixed(3) : '', r.cvss || '', getSeverity(r.cvss), (r.v.cve.published || '').slice(0, 10), getDescription(r.v)];
   });
   downloadCsv([header, ...data], `threatwatch-fix-first-${_todayStr()}.csv`);
@@ -1737,10 +1912,11 @@ function exportPriorityCSV() {
 function exportPriorityPDF() {
   const rows = prioritySelection();
   if (!rows.length) return;
-  const sections = PRIORITY_TIERS.map(t => ({
+  const early = rows.filter(r => r.early).map(r => r.v);
+  const sections = [{ heading: `EARLY WARNING — remote no-auth bugs in core software, last ${EARLY_WARNING_HOURS} h`, items: early }].concat(PRIORITY_TIERS.map(t => ({
     heading: `${t.key} ${t.label} — ${t.rule} · ${t.sla}`,
     items: rows.filter(r => r.tier === t.tier).slice(0, 50).map(r => r.v),
-  }));
+  })));
   printReport('THREATWATCH — Fix First (remediation priority)', sections);
 }
 
@@ -1749,8 +1925,10 @@ function priorityContextForAi() {
   const rows = getPriorityRows();
   if (!rows.length) return 'none in range';
   const c = [1, 2, 3, 4].map(n => `P${n}: ${rows.filter(r => r.tier === n).length}`).join(', ');
-  const top = rows.slice(0, 10).map((r, i) => `${i + 1}. ${r.v.cve.id} (P${r.tier}${r.v._kevExploited ? ', KEV' : ''}${r.epss !== undefined ? ', EPSS ' + (r.epss * 100).toFixed(1) + '%' : ''}${r.cvss ? ', CVSS ' + r.cvss : ''}${prioVendorText(r.v) ? ', ' + prioVendorText(r.v).slice(0, 40) : ''})`).join('; ');
-  return `${c}. Top 10: ${top}`;
+  const top = rows.slice(0, 10).map((r, i) => `${i + 1}. ${r.v.cve.id} (P${r.tier}: ${r.reasons.join(', ')}${r.early ? ', EARLY WARNING' : ''}${r.cvss ? ', CVSS ' + r.cvss : ''}${prioVendorText(r.v) ? ', ' + prioVendorText(r.v).slice(0, 40) : ''})`).join('; ');
+  const early = rows.filter(r => r.early).length;
+  const up = (upstreamNotices.upcoming || []).map(u => `${u.product} security release ${u.releaseDate} (highest ${u.severity})`).join('; ');
+  return `${c}. Early warnings (remote no-auth core-software bugs < ${EARLY_WARNING_HOURS} h): ${early}.${up ? ' Upcoming: ' + up + '.' : ''} Top 10: ${top}`;
 }
 
 // ── CVE detail panel ──────────────────────────────────
@@ -1824,6 +2002,12 @@ function renderCveDetail(id) {
 
   body.innerHTML = `
     <div class="detail-badges">${badgesHtml(v)}</div>
+    ${(() => {
+      const sig = prioritySignals(v, { ...prioCtx(), epss: epss?.epss });
+      if (!sig.tier) return '<div class="detail-prio dim">Fix First: no scheduled action (no exploitation signal, CVSS below 7)</div>';
+      const t = PRIORITY_TIERS[sig.tier - 1];
+      return `<div class="detail-prio" style="--tier:${TIER_COLOR[sig.tier]}"><b>${t.key} · ${t.label}</b> — ${escapeHtml(sig.reasons.join(' · '))}${sig.early ? ' · <b>EARLY WARNING</b>' : ''} <span>${escapeHtml(t.sla)}</span></div>`;
+    })()}
     <div class="detail-scores">
       <div class="score-box" style="border-color:${SEV_COLOR[sev]}">
         <div class="score-label">CVSS ${escapeHtml(cvss.version)}</div>
@@ -1857,6 +2041,11 @@ function renderCveDetail(id) {
       ${fact('Reported by', escapeHtml(sources.join(', ')))}
       ${fact('Weakness (CWE)', escapeHtml(cwes.join(', ')))}
       ${fact('Affected', escapeHtml(products.slice(0, 12).join(', ') + (products.length > 12 ? ` +${products.length - 12} more` : '')))}
+      ${fact('Core software', escapeHtml(coreOf(v) || ''))}
+      ${fact('Public exploit', escapeHtml(EXPLOIT_LABEL[publicExploitSource(v, exploitIds)] || ''))}
+      ${fact('CISA SSVC', v._ssvc ? escapeHtml(`exploitation: ${v._ssvc.e || '?'} · automatable: ${v._ssvc.a || '?'} · impact: ${v._ssvc.t || '?'}`) : '')}
+      ${fact('Vendor advisory', v._upstream ? `<a href="${escapeHtml(safeUrl(v._upstream.link))}" target="_blank" rel="noopener">${escapeHtml(v._upstream.product)}${v._upstream.severity ? ' — ' + escapeHtml(v._upstream.severity) : ''} ↗</a>` : '')}
+      ${fact('Assigned by (CNA)', escapeHtml(v.cve._cna || ''))}
     </div>
     <div class="detail-section">CLOUDFLARE WAF</div>
     ${wafHtml}
@@ -2233,6 +2422,8 @@ function loadCompanyProfile() {
     watchlist = Array.isArray(p.watchlist) ? p.watchlist : [];
     notifyEnabled = !!p.notifyEnabled;
   }
+  const cw = lsGetJson('tw_core_watch', null);
+  if (cw) coreWatch = { disabled: Array.isArray(cw.disabled) ? cw.disabled : [], extra: Array.isArray(cw.extra) ? cw.extra : [] };
   updateCompanyModeUI();
 }
 
@@ -2250,6 +2441,12 @@ async function saveCompanyProfile() {
     try { await Notification.requestPermission(); } catch { /* ignore */ }
   }
   notifyEnabled = wantNotify && 'Notification' in window && Notification.permission === 'granted';
+  coreWatch = {
+    disabled: CORE_SOFTWARE.map(d => d.key).filter(k => !document.querySelector(`#core-grid input[value="${k}"]`)?.checked),
+    extra: [..._modalCoreExtra],
+  };
+  lsSet('tw_core_watch', JSON.stringify(coreWatch));
+  _coreVer++;
   if (wantNotify && !notifyEnabled) addLog('ALERT', 'Browser notifications are blocked for this site — alerts will appear in this log only');
   persistProfile();
   closeCompanyModal();
@@ -2269,6 +2466,10 @@ function openCompanyModal() {
   nt.disabled = !('Notification' in window);
   renderTechTags();
   renderWatchTags();
+  _modalCoreExtra = [...coreWatch.extra];
+  document.getElementById('core-grid').innerHTML = CORE_SOFTWARE.map(d => `
+    <label class="core-check"><input type="checkbox" value="${d.key}" ${coreWatch.disabled.includes(d.key) ? '' : 'checked'}> ${escapeHtml(d.label)}</label>`).join('');
+  renderCoreTags();
   document.getElementById('company-suggestions').innerHTML = COMMON_VENDORS.map(v =>
     `<button class="suggest-tag" data-suggest="${escapeHtml(v)}">${escapeHtml(v)}</button>`).join('');
   document.getElementById('company-modal-overlay').classList.add('active');
@@ -2300,6 +2501,10 @@ function addTagFromInput(inputId, list, render, event) {
 }
 function addTechTag(event) { addTagFromInput('company-tag-input', _modalTechStack, renderTechTags, event); }
 function addWatchTag(event) { addTagFromInput('watch-tag-input', _modalWatchlist, renderWatchTags, event); }
+let _modalCoreExtra = [];
+function renderCoreTags() { renderTagList('core-tags', _modalCoreExtra, 'removeCoreTag', 'No extra core software'); }
+function addCoreTag(event) { addTagFromInput('core-tag-input', _modalCoreExtra, renderCoreTags, event); }
+function removeCoreTag(index) { _modalCoreExtra.splice(index, 1); renderCoreTags(); }
 function addSuggestTag(vendor) { if (!_modalTechStack.includes(vendor)) { _modalTechStack.push(vendor); renderTechTags(); } }
 function removeTechTag(index) { _modalTechStack.splice(index, 1); renderTechTags(); }
 function removeWatchTag(index) { _modalWatchlist.splice(index, 1); renderWatchTags(); }

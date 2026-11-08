@@ -202,10 +202,12 @@
     </div>
 
     <div class="prio-method" id="prio-method">
-      Ranked by <b>exploitation</b> (CISA KEV) → <b>likelihood</b> (EPSS, chance of exploitation in the next 30 days) → <b>severity</b> (CVSS).
-      Within a tier: known ransomware use, then EPSS, then CVSS. Medium/low CVEs with no exploitation signal are left out.
+      Ranked by <b>exploitation</b> (CISA KEV / SSVC) → <b>likelihood</b> (EPSS, public exploits, remote bugs in core software) → <b>severity</b> (CVSS).
+      Within a tier: known ransomware use, early warnings, then EPSS, then CVSS. Medium/low CVEs with no exploitation signal are left out.
       <span id="prio-epss-status" class="prio-epss-status"></span>
     </div>
+
+    <div class="prio-early" id="prio-early" hidden></div>
 
     <div class="prio-tiers" id="prio-tiers" role="group" aria-label="Filter by priority tier"></div>
 
@@ -279,6 +281,8 @@
       <div class="source-pill" id="src-ubuntu"><span class="dot"></span>UBUNTU</div>
       <div class="source-pill" id="src-msrc"><span class="dot"></span>MSRC</div>
       <div class="source-pill" id="src-redhat"><span class="dot"></span>RED HAT</div>
+      <div class="source-pill" id="src-cveorg" title="New CVEs from CVE.org via the ThreatWatch intel worker"><span class="dot"></span>CVE.ORG</div>
+      <div class="source-pill" id="src-upstream" title="Node.js, OpenSSH and PHP project advisories"><span class="dot"></span>UPSTREAM</div>
     </div>
 
     <!-- Stats Bar -->
@@ -372,6 +376,8 @@
               <button class="ftab" data-src="ubuntu" onclick="filterSource('ubuntu', this)">UBUNTU</button>
               <button class="ftab" data-src="msrc" onclick="filterSource('msrc', this)">MSRC</button>
               <button class="ftab" data-src="redhat" onclick="filterSource('redhat', this)">REDHAT</button>
+              <button class="ftab" data-src="cveorg" onclick="filterSource('cveorg', this)">CVE.ORG</button>
+              <button class="ftab" data-src="upstream" onclick="filterSource('upstream', this)">UPSTREAM</button>
             </div>
             <div class="filter-tabs" role="group" aria-label="Highlights">
               <button class="ftab" id="toggle-new" aria-pressed="false" onclick="toggleNewOnly()" title="Only entries new since your last visit">★ NEW</button>
@@ -597,6 +603,7 @@
   </aside>
 
   <script src="js/core.js"></script>
+  <script src="js/feeds.js"></script>
   <script src="js/app.js"></script>
   <script src="js/cloudctl.js"></script>
 
@@ -644,6 +651,16 @@
             <button class="date-go" onclick="addWatchTag()">+ ADD</button>
           </div>
           <div id="watch-tags" class="tag-list"></div>
+        </div>
+        <div>
+          <label class="profile-label">CORE SOFTWARE WATCH</label>
+          <div class="profile-hint">Software that runs almost everywhere. A remote, no-login bug in one of these goes straight to P2 · THIS WEEK, and new ones are flagged as early warnings without waiting for EPSS or KEV. Unscored CVEs (e.g. Linux kernel) are kept for triage.</div>
+          <div class="core-grid" id="core-grid"></div>
+          <div style="display:flex;gap:6px;margin:8px 0">
+            <input type="text" id="core-tag-input" class="profile-input" placeholder="add your own, e.g. tomcat, postgresql, vmware esxi" onkeydown="if(event.key==='Enter'||event.key===','){addCoreTag(event);}" style="flex:1">
+            <button class="date-go" onclick="addCoreTag()">+ ADD</button>
+          </div>
+          <div id="core-tags" class="tag-list"></div>
         </div>
         <div style="display:flex;align-items:center;gap:12px">
           <label class="profile-label" style="margin-bottom:0" for="notify-toggle">BROWSER ALERTS</label>
