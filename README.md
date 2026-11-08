@@ -12,6 +12,18 @@ A live security dashboard that merges vulnerability data from **8 feeds** into o
 
 ## ✨ Features
 
+### Fix First — remediation priority (default view)
+A ranked to-do list for a security lead: which recent vulnerabilities to fix first, in order.
+
+| Tier | Rule | Suggested SLA |
+|------|------|---------------|
+| **P1 · FIX NOW** | Exploited in the wild (CISA KEV) | Immediately (shows the CISA due date and overdue days) |
+| **P2 · THIS WEEK** | EPSS ≥ 10% — likely exploited within 30 days | 7 days |
+| **P3 · THIS MONTH** | CVSS ≥ 9.0, no exploitation signal | 30 days |
+| **P4 · NEXT CYCLE** | CVSS 7.0–8.9, no exploitation signal | Next patch cycle |
+
+Inside a tier: known ransomware use first, then EPSS, then CVSS, then newest. Medium/low CVEs with no exploitation signal are left out. Every CVE FIRST scores above 10% is bulk-loaded, so an unscored or medium-severity CVE that attackers are likely to use still lands in P2. Click a tier to filter, a row for full details; export the queue as CSV (rank, SLA, KEV due date, EPSS, CVSS) or PDF. Company mode narrows it to your stack.
+
 ### Threat intelligence
 - **8 live feeds** — NVD, CISA KEV, GitHub Security Advisories, Palo Alto PSIRT, OSV, Ubuntu, Microsoft MSRC, Red Hat. Duplicates are merged: if GitHub or KEV reports a CVE NVD already has, the entry shows both sources and gains any score or KEV status the other feed had.
 - **Honest date ranges** — 7D / 30D / 90D / custom. Every feed is filtered to the selected range (KEV by the date CISA added the entry); the source pills show "in range / fetched".

@@ -116,8 +116,7 @@ function setActiveIn(containerSel, attr, value) {
 function setRange(days, btn) {
   currentRangeDays = days;
   _currentLoadKeyword = '';
-  document.querySelectorAll('.rtab').forEach(t => t.classList.remove('active'));
-  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.rtab').forEach(t => t.classList.toggle('active', t.dataset.range === String(days)));
   document.getElementById('custom-dates').classList.remove('visible');
   allCves = allCves.filter(v => v._source === 'nvd'); // external feeds are re-fetched for the new range
   currentPage = 1;
@@ -223,10 +222,14 @@ function loadCustomRange() {
 // Each refresh gets a generation number; a load that is no longer the latest
 // stops writing state (switching range mid-load used to let the old load win).
 let _loadGen = 0;
+let _feedsLoading = false;
 function refreshAll(customStart, customEnd) {
   const gen = ++_loadGen;
   resetSourcePills();
-  return loadNVD(customStart, customEnd, gen).then(() => { if (gen === _loadGen) return loadExternalSources(); });
+  _feedsLoading = true;
+  return loadNVD(customStart, customEnd, gen)
+    .then(() => { if (gen === _loadGen) return loadExternalSources(); })
+    .finally(() => { if (gen === _loadGen) { _feedsLoading = false; renderPriority(); } });
 }
 
 /** Show every source as "loading" so counts from the previous range don't linger. */
@@ -263,6 +266,7 @@ function renderAll() {
   _renderTimer = setTimeout(() => { _renderTimer = null; renderNow(); }, 30);
 }
 function renderNow() {
+  renderPriority();
   renderCves();
   renderStats();
   renderTimeline();
@@ -1490,7 +1494,48 @@ function queueEpssFor(cves) {
 
 /** After a full load, score what matters most: KEV, critical and high. */
 function queueEpssBackground() {
-  queueEpssFor(allCves.filter(v => v._kevExploited || getCvss(v) >= 7).slice(0, 1500));
+  const rank = v => v._kevExploited ? 0 : getCvss(v) >= 9 ? 1 : 2;
+  const date = v => parseFeedDate(v.cve.published);
+  queueEpssFor(allCves.filter(v => v._kevExploited || getCvss(v) >= 7)
+    .sort((a, b) => (rank(a) - rank(b)) || (date(b) - date(a)))
+    .slice(0, 3000));
+}
+
+/**
+ * Bulk-load every CVE FIRST scores at EPSS ≥ 10% (~17k), so the Fix First
+ * view finds likely-exploited CVEs even when they are unscored or medium.
+ * Anything absent from this set is known to be below the P2 threshold.
+ */
+let _epssBulkState = 'idle'; // idle | loading | ok | failed
+let _epssBulkCount = 0;
+async function loadHighEpss() {
+  if (_epssBulkState === 'loading' || _epssBulkState === 'ok') return;
+  _epssBulkState = 'loading';
+  renderPriority();
+  const base = `https://api.first.org/data/v1/epss?epss-gt=${EPSS_URGENT - 0.000001}&limit=5000`;
+  const get = async offset => {
+    const url = `${base}&offset=${offset}`;
+    let r;
+    try { r = await fetch(url); if (!r.ok) throw new Error(); } catch { r = await fetchViaProxy(url); }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  };
+  try {
+    const first = await get(0);
+    const pages = [first];
+    const offsets = [];
+    for (let o = 5000; o < Math.min(first.total || 0, 50000); o += 5000) offsets.push(o);
+    pages.push(...await Promise.all(offsets.map(get)));
+    let n = 0;
+    pages.forEach(pg => (pg.data || []).forEach(d => { epssCache.set(d.cve, { epss: +d.epss, percentile: +d.percentile }); n++; }));
+    _epssBulkCount = n;
+    _epssBulkState = 'ok';
+    addLog('SYNC', `EPSS: ${n.toLocaleString()} CVEs with ≥10% exploitation probability loaded from FIRST`);
+  } catch (e) {
+    _epssBulkState = 'failed';
+    addLog('ALERT', `EPSS bulk load failed (${e.message}) — Fix First falls back to per-CVE EPSS lookups`);
+  }
+  renderAll();
 }
 
 async function flushEpss() {
@@ -1516,9 +1561,196 @@ async function flushEpss() {
   }
   if (changed) {
     renderCves();
+    renderPriority();
     if (_openCveId) renderCveDetail(_openCveId);
   }
   if (_epssPending.size && !_epssFailed) setTimeout(flushEpss, 800);
+}
+
+// ── Fix First: remediation priority view ──────────────
+let prioTierFilter = 'ALL';   // ALL | '1'..'4'
+let _prioLimit = 25;
+const PRIO_STEP = 25;
+const TIER_COLOR = { 1: 'var(--critical)', 2: 'var(--high)', 3: 'var(--medium)', 4: 'var(--info)' };
+
+/** Ranked rows for the active data set (company mode respected). */
+function getPriorityRows() {
+  return rankByPriority(getActiveCves(), id => epssCache.get(id)?.epss);
+}
+
+function setPrioTier(t) {
+  prioTierFilter = prioTierFilter === String(t) ? 'ALL' : String(t);
+  _prioLimit = PRIO_STEP;
+  syncHash();
+  renderPriority();
+}
+function showMorePriority() { _prioLimit += PRIO_STEP * 2; renderPriority(); }
+
+function fmtAge(ms) {
+  if (!ms) return '—';
+  const d = Math.floor((Date.now() - ms) / 86400000);
+  return d <= 0 ? 'today' : d === 1 ? '1d' : d + 'd';
+}
+
+function prioEpssCell(r) {
+  const e = epssCache.get(r.v.cve.id);
+  if (e) {
+    const pct = Math.max(2, Math.round(e.epss * 100));
+    return `<div class="prio-epss" title="${(e.epss * 100).toFixed(2)}% chance of exploitation in the next 30 days · percentile ${(e.percentile * 100).toFixed(0)}">
+      <span class="prio-epss-val${e.epss >= EPSS_URGENT ? ' hot' : ''}">${fmtEpss(e.epss)}</span>
+      <span class="prio-bar"><i style="width:${pct}%"></i></span></div>`;
+  }
+  if (epssCache.has(r.v.cve.id)) return '<span class="prio-dim" title="FIRST has no EPSS score for this CVE yet">n/a</span>';
+  if (_epssBulkState === 'ok') return '<span class="prio-dim" title="Below 10% — not in FIRST\'s high-probability set; exact value still loading">&lt;10%</span>';
+  return '<span class="prio-dim">…</span>';
+}
+
+function prioKevCell(v) {
+  if (!v._kevExploited) return '<span class="prio-dim">—</span>';
+  const k = v._kev || {};
+  const due = daysUntil(k.dueDate);
+  let dueHtml = '';
+  if (due !== null) {
+    dueHtml = due < 0 ? `<span class="prio-due overdue" title="CISA due date ${escapeHtml(k.dueDate)}">${-due}d overdue</span>`
+      : `<span class="prio-due" title="CISA due date ${escapeHtml(k.dueDate)}">due ${due === 0 ? 'today' : 'in ' + due + 'd'}</span>`;
+  }
+  return `<span class="kev-tag">⚡EXPLOITED</span>${k.knownRansomwareCampaignUse === 'Known' ? '<span class="ransom-tag" title="CISA: known use in ransomware campaigns">RANSOMWARE</span>' : ''}${dueHtml}`;
+}
+
+function prioVendorText(v) {
+  const k = v._kev;
+  if (k && (k.vendorProject || k.product)) return [k.vendorProject, k.product].filter(Boolean).join(' · ');
+  const prods = getAffectedProducts(v, 2).join(', ');
+  if (prods) return prods;
+  const vendor = getVendor(v);
+  return vendor && vendor.toLowerCase() !== 'unknown' ? vendor : '';
+}
+
+function prioRowHtml(r, rank) {
+  const v = r.v;
+  const t = PRIORITY_TIERS[r.tier - 1];
+  const sev = getSeverity(r.cvss);
+  const id = escapeHtml(v.cve.id);
+  const desc = getDescription(v) || 'No description';
+  const short = desc.length > 130 ? desc.slice(0, 130) + '…' : desc;
+  const vendor = prioVendorText(v);
+  const tags = (isNewSince(v, PREV_VISIT_MS) ? '<span class="new-tag">NEW</span>' : '')
+    + (watchlist.length && matchesAnyKeyword(v, watchlist) ? '<span class="watch-tag">WATCH</span>' : '')
+    + (v._demo ? '<span class="demo-tag">DEMO</span>' : '');
+  return `
+  <div class="prio-row tier-${r.tier}" role="row" tabindex="0" data-cve-id="${id}" aria-label="Rank ${rank}, ${t.key} ${t.label}: ${id}">
+    <span class="prio-rank" role="cell">${rank}</span>
+    <span role="cell"><span class="prio-pill" style="--tier:${TIER_COLOR[r.tier]}">${t.key} · ${t.label}</span></span>
+    <span class="prio-vuln" role="cell">
+      <span class="prio-id">${id}</span>${tags}
+      ${vendor ? `<span class="prio-vendor">${escapeHtml(vendor)}</span>` : ''}
+      <span class="prio-desc">${escapeHtml(short)}</span>
+    </span>
+    <span class="prio-kev" role="cell"><span class="prio-mlabel">KEV</span>${prioKevCell(v)}</span>
+    <span role="cell"><span class="prio-mlabel">EPSS</span>${prioEpssCell(r)}</span>
+    <span class="prio-cvss" role="cell"><span class="prio-mlabel">CVSS</span><b style="color:${SEV_COLOR[sev]}">${r.cvss > 0 ? r.cvss.toFixed(1) : '—'}</b><small>${sev === 'UNSCORED' ? 'no score' : sev}</small></span>
+    <span class="prio-age" role="cell" title="${v._kev?.dateAdded ? 'Added to KEV ' + escapeHtml(v._kev.dateAdded) : 'Published ' + escapeHtml((v.cve.published || '').slice(0, 10))}"><span class="prio-mlabel">AGE</span>${fmtAge(r.t)}</span>
+  </div>`;
+}
+
+function renderPriority() {
+  const list = document.getElementById('prio-list');
+  if (!list) return;
+  const rows = getPriorityRows();
+  const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  rows.forEach(r => counts[r.tier]++);
+
+  const badge = document.getElementById('prio-nav-badge');
+  if (badge) badge.textContent = allCves.length ? counts[1].toLocaleString() : '—';
+
+  // Tier tiles (also the filter)
+  document.getElementById('prio-tiers').innerHTML = PRIORITY_TIERS.map(t => `
+    <button class="prio-tile${prioTierFilter === String(t.tier) ? ' active' : ''}" style="--tier:${TIER_COLOR[t.tier]}"
+      aria-pressed="${prioTierFilter === String(t.tier)}" onclick="setPrioTier(${t.tier})">
+      <span class="prio-tile-key">${t.key} · ${t.label}</span>
+      <span class="prio-tile-num">${allCves.length ? counts[t.tier].toLocaleString() : '--'}</span>
+      <span class="prio-tile-rule">${escapeHtml(t.rule)}</span>
+      <span class="prio-tile-sla">${escapeHtml(t.sla)}</span>
+    </button>`).join('');
+
+  const range = getSelectedRange().label;
+  const total = rows.length;
+  const urgent = counts[1] + counts[2];
+  const sub = document.getElementById('prio-sub');
+  if (!allCves.length) {
+    sub.textContent = _nvdLoading ? 'Loading vulnerability feeds…' : 'No data loaded yet.';
+  } else {
+    sub.innerHTML = `<b>${urgent.toLocaleString()}</b> to fix this week (exploited or likely) · <b>${total.toLocaleString()}</b> in the remediation queue · from ${getActiveCves().length.toLocaleString()} CVEs, ${escapeHtml(range)}`
+      + (_feedsLoading ? ' · <span class="prio-loading">still loading feeds — counts will grow</span>' : '')
+      + (companyModeActive && companyTechStack.length ? ` · <span class="prio-company">company stack only (${escapeHtml(companyTechStack.slice(0, 4).join(', '))}${companyTechStack.length > 4 ? '…' : ''})</span>` : '');
+  }
+
+  const st = document.getElementById('prio-epss-status');
+  st.textContent = {
+    idle: '', loading: 'Loading EPSS scores from FIRST…',
+    ok: `EPSS: ${_epssBulkCount.toLocaleString()} high-probability CVEs loaded.`,
+    failed: 'EPSS bulk load failed — P2 may be incomplete.',
+  }[_epssBulkState];
+  st.classList.toggle('warn', _epssBulkState === 'failed');
+
+  const shown = prioritySelection(rows);
+  const tierInfo = prioTierFilter !== 'ALL' ? PRIORITY_TIERS[Number(prioTierFilter) - 1] : null;
+  document.getElementById('prio-list-title').textContent = tierInfo ? `Remediation queue — ${tierInfo.key} ${tierInfo.label}` : 'Remediation queue';
+  document.getElementById('prio-count').textContent = shown.length ? `${Math.min(_prioLimit, shown.length).toLocaleString()} of ${shown.length.toLocaleString()}` : '';
+
+  if (!shown.length) {
+    list.innerHTML = `<div class="error-msg">${!allCves.length ? 'LOADING…' : tierInfo ? `NOTHING IN ${tierInfo.key} FOR THIS RANGE` : 'NO CVE IN THIS RANGE NEEDS SCHEDULED ACTION'}</div>`;
+    document.getElementById('prio-more').innerHTML = '';
+    return;
+  }
+  const page = shown.slice(0, _prioLimit);
+  // Rank is the position in the full queue, so filtering a tier keeps the real order number
+  const rankOf = new Map(rows.map((r, i) => [r, i + 1]));
+  list.innerHTML = page.map(r => prioRowHtml(r, rankOf.get(r))).join('');
+  document.getElementById('prio-more').innerHTML = shown.length > _prioLimit
+    ? `<button class="ftab" onclick="showMorePriority()">SHOW ${Math.min(PRIO_STEP * 2, shown.length - _prioLimit)} MORE</button>`
+    : '';
+  queueEpssFor(page.map(r => r.v));
+}
+
+function prioritySelection(all = getPriorityRows()) {
+  return prioTierFilter === 'ALL' ? all : all.filter(r => String(r.tier) === prioTierFilter);
+}
+
+function exportPriorityCSV() {
+  const all = getPriorityRows();
+  const rows = prioritySelection(all);
+  if (!rows.length) return;
+  const rankOf = new Map(all.map((r, i) => [r, i + 1]));
+  const header = ['Rank', 'Priority', 'Suggested SLA', 'CVE ID', 'Vendor / product', 'KEV', 'KEV due date', 'Ransomware use', 'EPSS', 'EPSS percentile', 'CVSS', 'Severity', 'Published', 'Description'];
+  const data = rows.map(r => {
+    const t = PRIORITY_TIERS[r.tier - 1];
+    const e = epssCache.get(r.v.cve.id);
+    const k = r.v._kev || {};
+    return [rankOf.get(r), `${t.key} ${t.label}`, t.sla, r.v.cve.id, prioVendorText(r.v), r.v._kevExploited ? 'Yes' : 'No', k.dueDate || '', k.knownRansomwareCampaignUse || '',
+      e ? e.epss.toFixed(4) : '', e ? e.percentile.toFixed(3) : '', r.cvss || '', getSeverity(r.cvss), (r.v.cve.published || '').slice(0, 10), getDescription(r.v)];
+  });
+  downloadCsv([header, ...data], `threatwatch-fix-first-${_todayStr()}.csv`);
+  addLog('SYNC', `Exported ${rows.length.toLocaleString()} prioritized CVEs to CSV`);
+}
+
+function exportPriorityPDF() {
+  const rows = prioritySelection();
+  if (!rows.length) return;
+  const sections = PRIORITY_TIERS.map(t => ({
+    heading: `${t.key} ${t.label} — ${t.rule} · ${t.sla}`,
+    items: rows.filter(r => r.tier === t.tier).slice(0, 50).map(r => r.v),
+  }));
+  printReport('THREATWATCH — Fix First (remediation priority)', sections);
+}
+
+/** Compact summary for the AI system prompt. */
+function priorityContextForAi() {
+  const rows = getPriorityRows();
+  if (!rows.length) return 'none in range';
+  const c = [1, 2, 3, 4].map(n => `P${n}: ${rows.filter(r => r.tier === n).length}`).join(', ');
+  const top = rows.slice(0, 10).map((r, i) => `${i + 1}. ${r.v.cve.id} (P${r.tier}${r.v._kevExploited ? ', KEV' : ''}${r.epss !== undefined ? ', EPSS ' + (r.epss * 100).toFixed(1) + '%' : ''}${r.cvss ? ', CVSS ' + r.cvss : ''}${prioVendorText(r.v) ? ', ' + prioVendorText(r.v).slice(0, 40) : ''})`).join('; ');
+  return `${c}. Top 10: ${top}`;
 }
 
 // ── CVE detail panel ──────────────────────────────────
@@ -1691,7 +1923,8 @@ function currentHashState() {
     kw: custom ? _currentLoadKeyword : undefined,
     sev: currentFilter, src: currentSourceFilter, sort: currentSort, page: currentPage,
     new: newOnly, watch: watchOnly,
-    view: typeof currentView !== 'undefined' ? currentView : 'threat-intel',
+    view: typeof currentView !== 'undefined' ? currentView : 'priority',
+    pt: prioTierFilter,
     cve: _openCveId || undefined,
   };
 }
@@ -1711,6 +1944,7 @@ function applyHashState(s) {
   currentSourceFilter = s.src; setActiveIn('#source-tabs', 'data-src', s.src);
   currentSort = s.sort; const sel = document.getElementById('sort-select'); if (sel) sel.value = s.sort;
   currentPage = s.page;
+  prioTierFilter = s.pt;
   toggleNewOnly(s.new); toggleWatchOnly(s.watch);
   document.querySelectorAll('.rtab').forEach(t => t.classList.remove('active'));
   if (s.range === 'custom') {
@@ -1729,7 +1963,7 @@ function applyHashState(s) {
     currentRangeDays = Number(s.range);
     _currentLoadKeyword = '';
     document.getElementById('custom-dates').classList.remove('visible');
-    document.querySelector(`.rtab[data-range="${s.range}"]`)?.classList.add('active');
+    document.querySelectorAll(`.rtab[data-range="${s.range}"]`).forEach(t => t.classList.add('active'));
   }
   const after = JSON.stringify([currentRangeDays, document.getElementById('date-start').value, document.getElementById('date-end').value, _currentLoadKeyword]);
   _applyingHash = false;
@@ -1840,7 +2074,7 @@ function printReport(titleText, sections) {
       const score = getCvss(v);
       const affected = getAffectedProducts(v);
       html += `<div class="pr-item">
-        <div class="pr-id">${escapeHtml(v.cve.id)} &nbsp; ${getSeverity(score)}${score > 0 ? ` — CVSS ${score.toFixed(1)}` : ''}${v._kevExploited ? ' · ⚡ KEV EXPLOITED' : ''}</div>
+        <div class="pr-id">${escapeHtml(v.cve.id)} &nbsp; ${getSeverity(score)}${score > 0 ? ` — CVSS ${score.toFixed(1)}` : ''}${v._kevExploited ? ' · ⚡ KEV EXPLOITED' : ''}${epssCache.get(v.cve.id) ? ' · EPSS ' + fmtEpss(epssCache.get(v.cve.id).epss) : ''}</div>
         <div class="pr-sub">${escapeHtml((v.cve.published || '').substring(0, 10))} · ${escapeHtml(getSourceLabel(v).toUpperCase())}${affected.length ? ' · ' + escapeHtml(affected.join(', ')) : ''}</div>
         <div class="pr-desc">${escapeHtml(getDescription(v) || 'No description')}</div>
       </div>`;

@@ -55,7 +55,8 @@ No build step. Tests cover the pure helpers in `js/core.js` and the proxy worker
   <div class="main-area">
     <div class="command-bar"> ← AI input + view-aware suggestion chips
     <div class="view-area">
-      <div class="view active" id="view-threat-intel">  ← original dashboard
+      <div class="view active" id="view-priority">      ← Fix First (default landing view)
+      <div class="view"        id="view-threat-intel">  ← original dashboard (LIVE FEED)
       <div class="view"        id="view-cf-overview">
       <div class="view"        id="view-cf-dns">
       <div class="view"        id="view-cf-waf">
@@ -103,6 +104,9 @@ let _loadGen = 0;                 // refresh generation — a superseded loadNVD
 const epssCache = new Map();      // CVE id -> { epss, percentile } | null
 let companyTechStack, companyModeActive, watchlist, notifyEnabled; // localStorage: tw_company_profile
 const PREV_VISIT_MS;              // localStorage tw_last_visit, read once → NEW badges
+let prioTierFilter = 'ALL';       // Fix First tier filter: ALL | '1'..'4' (hash: pt)
+let _epssBulkState;               // idle | loading | ok | failed — bulk EPSS ≥10% set from FIRST
+let _feedsLoading;                // true from refreshAll() until every feed has finished
 ```
 
 Each entry may carry `_source`, `_kevExploited`, `_kev` (KEV record: dateAdded, dueDate, requiredAction…), `_alsoIn` (other sources that reported the same CVE) and `_demo`.
@@ -115,7 +119,7 @@ let _lastWafRules;             // last WAF rules fetched by WAF Coverage; reused
 let currentZoneId = '', currentZoneName = '';
 let chatHistory = [];          // API-shaped messages for Claude tool-use loop
 let zoneData = {};
-let currentView = 'threat-intel';
+let currentView = 'priority';      // default view; hash omits view=priority
 const CF_API = 'https://api.cloudflare.com/client/v4';
 ```
 
@@ -139,6 +143,10 @@ Line numbers drift; search by name.
 | `checkAlerts()` | app.js | Real activity-log events + browser notifications for new KEV entries matching stack/watchlist |
 | `syncHash()` / `applyHashState()` | app.js | Shareable URL state (`#range=30&sev=CRITICAL&sort=epss&cve=…`) |
 | `runSearch()` | app.js | Local data + NVD keyword/ID search (+ Palo Alto PSIRT); results open in the detail panel |
+| `renderPriority()` | app.js | Fix First view: tier tiles (also the filter), ranked queue, EPSS/KEV cells; called from `renderNow()` and after EPSS arrives |
+| `loadHighEpss()` | app.js | Once per session: every CVE with EPSS ≥ 10% (~17k, `epss-gt` paged by 5000) into `epssCache`. A CVE absent from it is known to be < 10% |
+| `exportPriorityCSV()` / `exportPriorityPDF()` / `priorityContextForAi()` | app.js | Ranked-list exports and the top-10 summary in the AI system prompt |
+| `priorityTier()` / `rankByPriority()` | core.js | P1 = KEV, P2 = EPSS ≥ `EPSS_URGENT` (0.1), P3 = CVSS ≥ 9, P4 = CVSS 7–8.9, else 0. Order within a tier: ransomware Known → EPSS → CVSS → newest |
 | `getCvss()` | core.js | v4.0→v3.1→v3.0→v2.0; Primary (NVD) preferred over Secondary (CNA); 0 = unscored |
 | `mergeCves()` | core.js | Dedupe by id; duplicates enrich the existing entry (CVSS, KEV, `_alsoIn`) |
 | `classifyOwaspApi()` | app.js | Client-side OWASP API Top 10 classifier |

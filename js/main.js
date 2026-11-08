@@ -9,6 +9,7 @@ addLog('SYNC', 'THREATWATCH initialized — loading security feeds...');
 // ── Delegated listeners (rows and tiles are re-rendered constantly) ──
 ['click', 'keydown'].forEach(type => {
   document.getElementById('cve-feed').addEventListener(type, onCveListActivate);
+  document.getElementById('prio-list').addEventListener(type, onCveListActivate);
   document.getElementById('modal-body').addEventListener(type, onCveListActivate);
   document.getElementById('vendor-chart').addEventListener(type, onVendorActivate);
   document.getElementById('attack-grid').addEventListener(type, onCategoryActivate);
@@ -32,15 +33,17 @@ window.addEventListener('resize', () => {
 const initialState = parseHashState(location.hash);
 applyHashState(initialState);
 renderAll();
-if (initialState.view && initialState.view !== 'threat-intel') showView(initialState.view);
+if (initialState.view !== 'priority') showView(initialState.view);
+else setSuggestionsForView('priority');
 if (initialState.cve) openCveDetail(initialState.cve);
+loadHighEpss();
 refreshAll();
 
 // Back/forward or a pasted link: re-apply the state
 window.addEventListener('hashchange', () => {
   const s = parseHashState(location.hash);
   const rangeChanged = applyHashState(s);
-  if ((s.view || 'threat-intel') !== currentView) showView(s.view || 'threat-intel');
+  if (s.view !== currentView) showView(s.view);
   if (s.cve && s.cve !== _openCveId) openCveDetail(s.cve);
   else if (!s.cve) closeCveDetail();
   if (rangeChanged) {

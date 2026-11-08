@@ -208,12 +208,13 @@ function toCsv(rows) {
 }
 
 // ── URL hash state (shareable views) ──────────────────────────
-const HASH_DEFAULTS = { range: '7', sev: 'ALL', src: 'ALL', sort: 'cvss', page: 1, new: false, watch: false, view: 'threat-intel' };
+const HASH_DEFAULTS = { range: '7', sev: 'ALL', src: 'ALL', sort: 'cvss', page: 1, new: false, watch: false, view: 'priority', pt: 'ALL' };
 const HASH_ALLOWED = {
   range: ['7', '30', '90', 'custom'],
   sev: ['ALL', ...SEVERITIES],
   src: ['ALL', 'nvd', 'kev', 'github', 'paloalto', 'osv', 'ubuntu', 'msrc', 'redhat'],
   sort: ['cvss', 'date', 'epss', 'kev'],
+  pt: ['ALL', '1', '2', '3', '4'],
 };
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CVE_RE = /^[A-Z0-9][A-Z0-9-]{2,40}$/i;
@@ -221,7 +222,7 @@ const CVE_RE = /^[A-Z0-9][A-Z0-9-]{2,40}$/i;
 function parseHashState(hash) {
   const p = new URLSearchParams(String(hash || '').replace(/^#/, ''));
   const s = { ...HASH_DEFAULTS };
-  for (const k of ['range', 'sev', 'src', 'sort']) {
+  for (const k of ['range', 'sev', 'src', 'sort', 'pt']) {
     const v = p.get(k);
     if (v && HASH_ALLOWED[k].includes(v)) s[k] = v;
   }
@@ -248,7 +249,7 @@ function parseHashState(hash) {
 
 function buildHashState(s) {
   const p = new URLSearchParams();
-  for (const k of ['range', 'sev', 'src', 'sort', 'view']) {
+  for (const k of ['range', 'sev', 'src', 'sort', 'view', 'pt']) {
     if (s[k] !== undefined && String(s[k]) !== String(HASH_DEFAULTS[k])) p.set(k, s[k]);
   }
   if (s.range === 'custom' && s.from && s.to) {
@@ -300,11 +301,66 @@ function isNewSince(vuln, sinceMs) {
   return !!t && t > sinceMs;
 }
 
+// ── Remediation priority (the "Fix First" dashboard) ─────────
+// Exploitation evidence beats exploitation likelihood beats severity:
+// a CVSS 7.5 bug attackers are using today outranks an unexploited 9.8.
+const EPSS_URGENT = 0.1; // ≥10% chance of exploitation in the next 30 days (≈ top 4% of all CVEs)
+const PRIORITY_TIERS = [
+  { tier: 1, key: 'P1', label: 'FIX NOW',    sla: 'Patch or mitigate immediately', rule: 'Exploited in the wild (CISA KEV)' },
+  { tier: 2, key: 'P2', label: 'THIS WEEK',  sla: 'Patch within 7 days',          rule: 'EPSS ≥ 10% — likely exploited within 30 days' },
+  { tier: 3, key: 'P3', label: 'THIS MONTH', sla: 'Patch within 30 days',         rule: 'CVSS ≥ 9.0, no exploitation signal yet' },
+  { tier: 4, key: 'P4', label: 'NEXT CYCLE', sla: 'Next patch cycle',             rule: 'CVSS 7.0–8.9, no exploitation signal yet' },
+];
+
+/** 1 (most urgent) … 4, or 0 when the CVE needs no scheduled action. */
+function priorityTier(vuln, epss) {
+  if (vuln?._kevExploited) return 1;
+  if (typeof epss === 'number' && epss >= EPSS_URGENT) return 2;
+  const s = getCvss(vuln);
+  if (s >= 9) return 3;
+  if (s >= 7) return 4;
+  return 0;
+}
+
+/**
+ * Remediation order. Within a tier: known ransomware use, then EPSS, then
+ * CVSS, then newest (KEV date added, else published). Returns
+ * [{ v, tier, epss, cvss, ransomware, t }] for tiered CVEs only.
+ */
+function rankByPriority(cves, epssLookup = () => undefined) {
+  const rows = [];
+  for (const v of cves) {
+    const e = epssLookup(v.cve.id);
+    const epss = typeof e === 'number' ? e : undefined;
+    const tier = priorityTier(v, epss);
+    if (!tier) continue;
+    rows.push({
+      v, tier, epss, cvss: getCvss(v),
+      ransomware: v._kev?.knownRansomwareCampaignUse === 'Known',
+      t: parseFeedDate(v._kev?.dateAdded || v.cve.published),
+    });
+  }
+  return rows.sort((a, b) => (a.tier - b.tier)
+    || (Number(b.ransomware) - Number(a.ransomware))
+    || ((b.epss ?? -1) - (a.epss ?? -1))
+    || (b.cvss - a.cvss)
+    || (b.t - a.t));
+}
+
+/** Whole days from `now` until a KEV due date (negative = overdue), or null. */
+function daysUntil(dateStr, now = Date.now()) {
+  const t = parseFeedDate(dateStr);
+  if (!t) return null;
+  const today = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), new Date(now).getUTCDate());
+  return Math.round((t - today) / 86400000);
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     SEVERITIES, PSEUDO_VENDORS, parseFeedDate, escapeHtml, safeUrl, getDescription, getCvss, getCvssDetail,
     getSeverity, getVendor, getChartVendor, getAffectedProducts, matchesKeyword,
     matchesAnyKeyword, searchableText, mergeCves, countsBySeverity, sortCves, csvCell, toCsv,
     parseHashState, buildHashState, dailyCounts, isNewSince,
+    EPSS_URGENT, PRIORITY_TIERS, priorityTier, rankByPriority, daysUntil,
   };
 }

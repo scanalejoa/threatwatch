@@ -2289,3 +2289,102 @@ header { gap: 16px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* ═══ Fix First — remediation priority view ═══ */
+.prio-main { display: flex; flex-direction: column; gap: 14px; }
+.prio-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.prio-title { font-family: 'Bebas Neue', sans-serif; font-weight: 400; font-size: 34px; letter-spacing: 6px; color: var(--text-bright); line-height: 1; }
+.prio-sub { margin-top: 6px; font-size: 15px; color: var(--text); letter-spacing: .3px; }
+.prio-sub b { color: var(--text-bright); font-family: 'JetBrains Mono', monospace; font-weight: 700; }
+.prio-company { color: var(--amber); }
+.prio-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.prio-method { font-size: 13px; color: var(--muted); line-height: 1.5; border-left: 2px solid var(--border2); padding: 2px 0 2px 12px; max-width: 980px; }
+.prio-method b { color: var(--text); font-weight: 600; }
+.prio-epss-status { color: var(--text); margin-left: 4px; }
+.prio-epss-status.warn { color: var(--warn); }
+
+.prio-tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.prio-tile {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left;
+  background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--tier);
+  padding: 12px 16px 14px; color: var(--text); cursor: pointer; font: inherit; transition: border-color .15s, background .15s;
+}
+.prio-tile:hover { border-color: var(--border2); border-top-color: var(--tier); }
+.prio-tile.active { background: var(--surface2); border-color: var(--tier); box-shadow: inset 0 0 0 1px var(--tier); }
+.prio-tile-key { font-size: 11px; font-weight: 700; letter-spacing: 2.5px; color: var(--tier); }
+.prio-tile-num { font-family: 'JetBrains Mono', monospace; font-size: 34px; font-weight: 700; color: var(--text-bright); line-height: 1.05; }
+.prio-tile-rule { font-size: 12px; color: var(--text); }
+.prio-tile-sla { font-size: 11px; color: var(--muted); letter-spacing: .5px; text-transform: uppercase; }
+
+.prio-panel .panel-header { gap: 12px; }
+.prio-row {
+  display: grid; grid-template-columns: 44px 128px minmax(0, 1fr) 150px 110px 78px 52px;
+  gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+}
+.prio-row-head { padding-top: 8px; padding-bottom: 8px; font-size: 10px; font-weight: 700; letter-spacing: 2px; color: var(--muted); background: var(--surface); }
+#prio-list .prio-row { cursor: pointer; }
+#prio-list .prio-row:hover, #prio-list .prio-row:focus-visible { background: var(--surface2); }
+#prio-list .prio-row:focus-visible { outline: 1px solid var(--amber); outline-offset: -1px; }
+.prio-row.tier-1 { border-left-color: var(--critical); }
+.prio-row.tier-2 { border-left-color: var(--high); }
+.prio-row.tier-3 { border-left-color: var(--medium); }
+.prio-row.tier-4 { border-left-color: var(--info); }
+.prio-rank { font-family: 'JetBrains Mono', monospace; font-size: 15px; font-weight: 700; color: var(--text-bright); text-align: right; }
+.prio-pill {
+  display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; white-space: nowrap;
+  color: var(--tier); border: 1px solid var(--tier); padding: 2px 7px; background: color-mix(in srgb, var(--tier) 10%, transparent);
+}
+.prio-vuln { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; min-width: 0; }
+.prio-id { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: var(--text-bright); }
+.prio-vendor { font-size: 12px; color: var(--amber); text-transform: uppercase; letter-spacing: .8px; }
+.prio-desc { flex-basis: 100%; font-size: 13px; color: var(--text); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prio-kev { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+.prio-kev .kev-tag { margin-left: 0; }
+.ransom-tag { font-family: 'JetBrains Mono', monospace; font-size: 8px; padding: 1px 4px; color: var(--text-bright); background: rgba(234,82,116,.28); border: 1px solid var(--critical); letter-spacing: .5px; }
+.prio-due { flex-basis: 100%; font-size: 11px; color: var(--muted); }
+.prio-due.overdue { color: var(--critical); font-weight: 700; }
+.prio-epss { display: flex; flex-direction: column; gap: 3px; }
+.prio-epss-val { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text); }
+.prio-epss-val.hot { color: var(--text-bright); font-weight: 700; }
+.prio-bar { display: block; width: 100%; height: 4px; background: var(--surface2); border-radius: 2px; overflow: hidden; }
+.prio-bar i { display: block; height: 100%; background: var(--high); border-radius: 2px; }
+.prio-cvss { display: flex; flex-direction: column; line-height: 1.1; }
+.prio-cvss b { font-family: 'JetBrains Mono', monospace; font-size: 16px; }
+.prio-cvss small { font-size: 10px; letter-spacing: 1px; color: var(--muted); }
+.prio-age { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
+.prio-dim { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
+.prio-mlabel { display: none; }
+.prio-more { display: flex; justify-content: center; padding: 10px; }
+.prio-more:empty { display: none; }
+.badge.prio-badge { color: var(--critical); border-color: rgba(234,82,116,.45); }
+
+@media (max-width: 1100px) {
+  .prio-row { grid-template-columns: 36px 112px minmax(0, 1fr) 130px 96px 64px; }
+  .prio-row > :nth-child(7) { display: none; }
+}
+@media (max-width: 768px) {
+  .prio-tiers { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .prio-tile-num { font-size: 26px; }
+  .prio-row-head { display: none; }
+  .prio-row {
+    grid-template-columns: 30px auto 1fr;
+    grid-template-areas: "rank pill pill" "vuln vuln vuln" "kev epss cvss";
+    gap: 8px 10px; padding: 12px;
+  }
+  .prio-row > :nth-child(1) { grid-area: rank; text-align: left; }
+  .prio-row > :nth-child(2) { grid-area: pill; }
+  .prio-row > :nth-child(3) { grid-area: vuln; }
+  .prio-row > :nth-child(4) { grid-area: kev; }
+  .prio-row > :nth-child(5) { grid-area: epss; }
+  .prio-row > :nth-child(6) { grid-area: cvss; }
+  .prio-row > :nth-child(7) { display: none; }
+  .prio-mlabel { display: block; flex-basis: 100%; font-size: 9px; letter-spacing: 1.5px; color: var(--muted); }
+  .prio-desc { white-space: normal; }
+}
+@media (max-width: 480px) {
+  .prio-title { font-size: 28px; }
+  .prio-tile { padding: 10px 12px; }
+  .prio-tile-rule { font-size: 11px; }
+}
+.prio-loading { color: var(--warn); }

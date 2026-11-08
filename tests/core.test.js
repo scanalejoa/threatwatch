@@ -169,3 +169,48 @@ test('parseFeedDate treats zone-less NVD timestamps as UTC', () => {
   assert.equal(core.parseFeedDate(''), 0);
   assert.equal(core.parseFeedDate('garbage'), 0);
 });
+
+test('priorityTier: KEV beats EPSS beats CVSS; medium/low/unscored need no action', () => {
+  assert.equal(core.priorityTier(cve('a', { score: 4, kev: true })), 1, 'exploited medium is still P1');
+  assert.equal(core.priorityTier(cve('b'), 0.4), 2, 'unscored but likely exploited is P2');
+  assert.equal(core.priorityTier(cve('c', { score: 5 }), 0.1), 2, 'EPSS threshold is inclusive');
+  assert.equal(core.priorityTier(cve('d', { score: 9.8 }), 0.02), 3);
+  assert.equal(core.priorityTier(cve('e', { score: 7.5 })), 4);
+  assert.equal(core.priorityTier(cve('f', { score: 6.9 }), 0.05), 0);
+  assert.equal(core.priorityTier(cve('g')), 0);
+});
+
+test('rankByPriority orders by tier, ransomware, EPSS, CVSS, then newest', () => {
+  const kevRansom = { ...cve('kev-ransom', { score: 6, kev: true }), _kev: { knownRansomwareCampaignUse: 'Known', dateAdded: '2026-11-01' } };
+  const kevHighEpss = { ...cve('kev-epss', { score: 9.8, kev: true }), _kev: { knownRansomwareCampaignUse: 'Unknown', dateAdded: '2026-11-02' } };
+  const list = [
+    cve('p4', { score: 8 }),
+    cve('p3-old', { score: 9.8, published: '2026-11-01T00:00:00' }),
+    cve('p3-new', { score: 9.8, published: '2026-11-05T00:00:00' }),
+    cve('p2', { score: 5 }),
+    kevHighEpss, kevRansom,
+    cve('ignored', { score: 5 }),
+  ];
+  const epss = { p2: 0.3, 'kev-epss': 0.9, 'kev-ransom': 0.01 };
+  const rows = core.rankByPriority(list, id => epss[id]);
+  assert.deepEqual(rows.map(r => r.v.cve.id), ['kev-ransom', 'kev-epss', 'p2', 'p3-new', 'p3-old', 'p4']);
+  assert.deepEqual(rows.map(r => r.tier), [1, 1, 2, 3, 3, 4]);
+  assert.equal(rows[0].ransomware, true);
+  assert.equal(rows[2].epss, 0.3);
+});
+
+test('daysUntil counts whole days and goes negative when overdue', () => {
+  const now = Date.parse('2026-11-08T15:00:00Z');
+  assert.equal(core.daysUntil('2026-11-22', now), 14);
+  assert.equal(core.daysUntil('2026-11-08', now), 0);
+  assert.equal(core.daysUntil('2026-11-05', now), -3);
+  assert.equal(core.daysUntil('', now), null);
+});
+
+test('hash state: priority is the default view and pt filters tiers', () => {
+  assert.equal(core.parseHashState('').view, 'priority');
+  assert.equal(core.buildHashState(core.parseHashState('#view=threat-intel')), '#view=threat-intel');
+  assert.equal(core.parseHashState('#pt=2').pt, '2');
+  assert.equal(core.parseHashState('#pt=9').pt, 'ALL');
+  assert.equal(core.buildHashState({ ...core.parseHashState(''), pt: '1' }), '#pt=1');
+});

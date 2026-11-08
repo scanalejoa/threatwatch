@@ -116,7 +116,11 @@
     <nav class="sidebar" id="sidebar" aria-label="Main navigation">
       <div class="sidebar-section">
         <div class="sidebar-label">THREAT INTEL</div>
-        <div class="nav-item active" data-view="threat-intel" onclick="showView('threat-intel', this)">
+        <div class="nav-item active" data-view="priority" onclick="showView('priority', this)">
+          <span class="icon">🚨</span> FIX FIRST
+          <span class="badge prio-badge" id="prio-nav-badge" title="P1 — exploited in the wild">—</span>
+        </div>
+        <div class="nav-item" data-view="threat-intel" onclick="showView('threat-intel', this)">
           <span class="icon">🎯</span> LIVE FEED
         </div>
         <div class="nav-item" data-view="waf-coverage" onclick="showView('waf-coverage', this)">
@@ -178,8 +182,57 @@
 
       <div class="view-area">
 
+        <!-- ─── VIEW: Fix First — remediation priority (default landing view) ─── -->
+        <div class="view active" id="view-priority">
+  <div class="main prio-main">
+    <div class="prio-head">
+      <div>
+        <h1 class="prio-title">FIX FIRST</h1>
+        <p class="prio-sub" id="prio-sub">Loading vulnerability feeds…</p>
+      </div>
+      <div class="prio-head-actions">
+        <div class="range-tabs" role="group" aria-label="Time range">
+          <button class="rtab active" data-range="7" onclick="setRange(7)">7D</button>
+          <button class="rtab" data-range="30" onclick="setRange(30)">30D</button>
+          <button class="rtab" data-range="90" onclick="setRange(90)">90D</button>
+        </div>
+        <button class="export-btn" style="display:inline-flex" onclick="exportPriorityCSV()" title="Export the ranked list as CSV">↓ CSV</button>
+        <button class="export-btn" style="display:inline-flex" onclick="exportPriorityPDF()" title="Print / save the top of the list as PDF">↓ PDF</button>
+      </div>
+    </div>
+
+    <div class="prio-method" id="prio-method">
+      Ranked by <b>exploitation</b> (CISA KEV) → <b>likelihood</b> (EPSS, chance of exploitation in the next 30 days) → <b>severity</b> (CVSS).
+      Within a tier: known ransomware use, then EPSS, then CVSS. Medium/low CVEs with no exploitation signal are left out.
+      <span id="prio-epss-status" class="prio-epss-status"></span>
+    </div>
+
+    <div class="prio-tiers" id="prio-tiers" role="group" aria-label="Filter by priority tier"></div>
+
+    <div class="panel prio-panel">
+      <div class="panel-header">
+        <div class="panel-title" id="prio-list-title">Remediation queue</div>
+        <span class="feed-count" id="prio-count"></span>
+      </div>
+      <div class="prio-table" role="table" aria-label="Vulnerabilities in remediation order">
+        <div class="prio-row prio-row-head" role="row">
+          <span role="columnheader">#</span>
+          <span role="columnheader">PRIORITY</span>
+          <span role="columnheader">VULNERABILITY</span>
+          <span role="columnheader">KEV</span>
+          <span role="columnheader">EPSS</span>
+          <span role="columnheader">CVSS</span>
+          <span role="columnheader">AGE</span>
+        </div>
+        <div id="prio-list" role="rowgroup"></div>
+      </div>
+      <div class="prio-more" id="prio-more"></div>
+    </div>
+  </div>
+        </div> <!-- /view-priority -->
+
         <!-- ─── VIEW: Threat Intelligence (the original dashboard) ─── -->
-        <div class="view active" id="view-threat-intel">
+        <div class="view" id="view-threat-intel">
   <div class="main">
     <!-- Date Range -->
     <div class="range-bar">

@@ -15,7 +15,7 @@
     let currentZoneName = '';
     let chatHistory = [];
     let zoneData = {};
-    let currentView = 'threat-intel';
+    let currentView = 'priority';
 
     const CF_API = 'https://api.cloudflare.com/client/v4';
 
@@ -242,6 +242,7 @@
       closeSidebar();
       syncHash();
       if (name === 'threat-intel') renderTimeline(); // width was 0 while hidden
+      if (name === 'priority') renderPriority();
       // Auto-load CF data when entering a CF view if connected and no body yet
       if (name.startsWith('cf-') && CF_TOKEN && currentZoneId) {
         const sub = name.replace('cf-', '');
@@ -252,6 +253,12 @@
 
     function setSuggestionsForView(name) {
       const SUGGESTIONS = {
+        'priority': [
+          'What should we patch first this week, and why?',
+          'Write an executive summary of the FIX NOW list',
+          'Which P1/P2 vulnerabilities affect my tech stack?',
+          'Group the top 20 priorities by vendor and owner team',
+        ],
         'threat-intel': [
           'Summarize critical CVEs from this week',
           'Show me KEV-listed CVEs',
@@ -593,6 +600,7 @@ THREAT INTEL CONTEXT (ThreatWatch):
 - Active filters: severity=${currentFilter}, source=${currentSourceFilter}, range=${currentRangeDays}d
 - Company tech stack focus: ${techStack}
 - Current view: ${currentView}
+- Remediation priority ("Fix First" dashboard; P1 = in CISA KEV, P2 = EPSS ≥ 10%, P3 = CVSS ≥ 9, P4 = CVSS 7–8.9): ${priorityContextForAi()}
 
 CLOUDFLARE CONTEXT (CLOUDCTL):
 - Account: ${cfStatus}
@@ -1220,7 +1228,7 @@ CLOUDFLARE CONTEXT (CLOUDCTL):
         }
       });
       reflectConnectionState();
-      setSuggestionsForView('threat-intel');
+      setSuggestionsForView(currentView);
       if (loadFromSession()) {
         reflectConnectionState();
         initCfApp();
