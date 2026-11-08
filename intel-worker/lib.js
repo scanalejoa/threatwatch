@@ -50,6 +50,30 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
+/** Read at most `max` bytes of a response body, then cancel the rest of the download. */
+export async function readPrefix(resp, max) {
+  if (!resp.body) return (await resp.text()).slice(0, max);
+  const reader = resp.body.getReader();
+  const chunks = [];
+  let n = 0;
+  while (n < max) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    n += value.length;
+  }
+  try { await reader.cancel(); } catch { /* already closed */ }
+  const buf = new Uint8Array(Math.min(n, max));
+  let o = 0;
+  for (const c of chunks) {
+    const take = Math.min(c.length, buf.length - o);
+    buf.set(c.subarray(0, take), o);
+    o += take;
+    if (o >= buf.length) break;
+  }
+  return new TextDecoder().decode(buf);
+}
+
 // ── CVE.org ingestion ──────────────────────────────────────────
 export async function ingestCveOrg(env, fetchFn = fetch, now = Date.now()) {
   const kv = env.INTEL;
@@ -62,7 +86,8 @@ export async function ingestCveOrg(env, fetchFn = fetch, now = Date.now()) {
 
   const resp = await fetchFn(DELTA_LOG_URL, { headers: { Range: `bytes=0-${DELTA_RANGE_BYTES - 1}`, 'User-Agent': UA } });
   if (!resp.ok) throw new Error(`deltaLog HTTP ${resp.status}`);
-  const text = await resp.text();
+  // Never trust the server to honour Range: stop reading after the window either way.
+  const text = await readPrefix(resp, DELTA_RANGE_BYTES);
   const delta = feeds.parseDeltaLogPrefix(text, state.cursor);
   // If the cursor is not inside the window we read, deltas were missed (worker was down for hours).
   const gap = !!state.cursor && !text.includes(`"fetchTime": "${state.cursor}"`) && !text.includes(`"fetchTime":"${state.cursor}"`);
@@ -109,7 +134,7 @@ export async function ingestCveOrg(env, fetchFn = fetch, now = Date.now()) {
     lastRun: new Date(now).toISOString(),
     lastError: '',
     gap: gap || false,
-    stats: { fetched: batch.length, stored, newInWindow: delta.newIds.length, stored14d: Object.keys(index).length },
+    stats: { fetched: batch.length, stored, newInWindow: delta.newIds.length, stored14d: Object.keys(index).length, deltaHttp: resp.status, deltaBytes: text.length },
   };
   await kv.put('state', JSON.stringify(next));
   return next;

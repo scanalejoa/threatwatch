@@ -142,3 +142,16 @@ test('HTTP: /v1/advisories fills an empty store on first request', async () => {
     assert.ok(env.INTEL.m.has('advisories'), 'stored for the next request');
   } finally { globalThis.fetch = realFetch; }
 });
+
+test('ingestCveOrg reads only the window even when the server ignores Range', async () => {
+  const { ingestCveOrg, readPrefix } = await load();
+  const head = deltaLog([{ t: '2026-11-08T18:00:00.000Z', new: ['CVE-2026-10001'] }]);
+  const old = deltaLog([{ t: '2026-11-01T00:00:00.000Z', new: ['CVE-2026-10002'] }]).slice(1);
+  const huge = head + ',' + ' '.repeat(300000) + old; // old delta sits beyond the 256 KB window
+  const env = { INTEL: memKV() };
+  const s = await ingestCveOrg(env, async url => url.endsWith('deltaLog.json') ? new Response(huge, { status: 200 }) : new Response('', { status: 404 }), NOW);
+  assert.equal(s.stats.newInWindow, 1, 'the delta past the window is not parsed');
+  assert.equal(s.stats.deltaHttp, 200);
+  assert.ok(s.stats.deltaBytes <= 262144);
+  assert.equal((await readPrefix(new Response('abcdef'), 3)), 'abc');
+});

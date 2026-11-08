@@ -2,7 +2,7 @@
 
 A live security dashboard that merges vulnerability data from **8 feeds** into one view, scores exploit likelihood with **EPSS**, and includes an **AI-driven Cloudflare console** that can check your WAF rules against the CVEs that matter.
 
-**Live:** [threatwatch-7du.pages.dev](https://threatwatch-7du.pages.dev/)
+**Live:** [threatwatch-7du.pages.dev](https://threatwatch-7du.pages.dev/) · **How it works:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ![Status](https://img.shields.io/badge/status-active-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -88,11 +88,16 @@ threatwatch/
 │   ├── cloudctl.js     # Cloudflare console + Claude agent loop
 │   └── main.js         # Start-up wiring (loaded last)
 ├── favicon.svg
+├── docs/
+│   └── ARCHITECTURE.md # Components, data flows, ranking logic, security model (with diagrams)
 ├── intel-worker/       # Cloudflare Worker: CVE.org early feed + upstream advisories (cron + KV)
+│   ├── worker.js       # Entry point (fetch + scheduled handlers)
+│   ├── lib.js          # Ingestion, advisories, HTTP helpers
+│   └── wrangler.toml   # KV binding INTEL, crons */15 and :07
 ├── cors-proxy/
 │   ├── worker.js       # Cloudflare Worker CORS proxy (host allowlist)
 │   └── wrangler.toml
-├── tests/              # node:test suites for core.js and the proxy
+├── tests/              # node:test suites (core, feeds, both workers) + real-data fixtures
 └── package.json
 ```
 
@@ -133,13 +138,29 @@ npx wrangler deploy
 
 ## 🛰️ Intel worker
 
-`intel-worker/` runs on a cron and stores an early-warning feed in Workers KV — see [intel-worker/README.md](intel-worker/README.md) for the one-time deploy (`wrangler kv namespace create INTEL`, then `wrangler deploy`). Without it the dashboard still works: the CVE.ORG pill shows ERR and upstream advisories are fetched from the browser.
+`intel-worker/` runs on a cron and stores an early-warning feed in Workers KV.
+
+**Deployed at:** `threatwatch-intel.scanalejoa.workers.dev` (KV namespace `INTEL`, crons every 15 min and hourly at :07).
+
+| Endpoint | Returns |
+|----------|---------|
+| `/v1/recent?days=7` | New CVEs from CVE.org (last 1–14 days) with CNA CVSS and CISA SSVC |
+| `/v1/advisories` | Node.js, OpenSSH and PHP advisories, plus announced security releases |
+| `/v1/health` | Last run, cursor, queue length, errors |
+
+```bash
+cd intel-worker
+npx wrangler deploy          # after code changes
+npx wrangler tail            # live logs
+```
+
+First-time setup and local development: [intel-worker/README.md](intel-worker/README.md). Without the worker the dashboard still works: the CVE.ORG pill shows ERR and upstream advisories are fetched from the browser.
 
 ---
 
 ## 🛠️ Tech stack
 
-Vanilla HTML, CSS and JavaScript · Cloudflare Pages (hosting) · Cloudflare Workers (proxy) · [SheetJS](https://sheetjs.com/) for inventory import · Fonts: Bebas Neue, Barlow Condensed, JetBrains Mono.
+Vanilla HTML, CSS and JavaScript · Cloudflare Pages (hosting) · Cloudflare Workers + KV (proxy, intel worker) · [SheetJS](https://sheetjs.com/) for inventory import · Fonts: Bebas Neue, Barlow Condensed, JetBrains Mono.
 
 ## 📝 License
 
