@@ -358,7 +358,19 @@ function isRemoteNoAuth(vuln) {
 }
 
 /** CISA SSVC (CVE.org ADP) — 'active' | 'poc' | 'none' | ''. */
-function ssvcExploitation(vuln) { return String(vuln?._ssvc?.e || ''); }
+/**
+ * CISA SSVC decision as { e, a, t } (exploitation, automatable, technical impact),
+ * from the CVE.org record (_ssvc) or NVD's copy (metrics.ssvcV203); null when absent.
+ */
+function ssvcOf(vuln) {
+  if (vuln?._ssvc) return vuln._ssvc;
+  const m = (vuln?.cve?.metrics?.ssvcV203 || [])[0];
+  if (!m) return null;
+  const o = Object.assign({}, ...(m.ssvcData?.options || []));
+  const low = x => String(x || '').toLowerCase();
+  return { e: low(o.exploitation ?? o.Exploitation), a: low(o.automatable ?? o.Automatable), t: low(o.technicalImpact ?? o['Technical Impact']) };
+}
+function ssvcExploitation(vuln) { return String(ssvcOf(vuln)?.e || ''); }
 
 /**
  * Where a public exploit is known: 'nuclei' (ready-made scanner template),
@@ -401,7 +413,7 @@ function prioritySignals(vuln, ctx = {}) {
   const core = ctx.core ? ctx.core(vuln) : null;
   const exploit = publicExploitSource(vuln, ctx.exploitIds);
   const ssvc = ssvcExploitation(vuln);
-  const remote = isRemoteNoAuth(vuln) || vuln?._ssvc?.a === 'yes';
+  const remote = isRemoteNoAuth(vuln) || ssvcOf(vuln)?.a === 'yes';
   const ageH = ((ctx.now || Date.now()) - parseFeedDate(vuln?.cve?.published)) / 3600000;
   const early = !!core && remote && ageH >= 0 && ageH <= EARLY_WARNING_HOURS;
   const reasons = [];
@@ -467,6 +479,6 @@ if (typeof module !== 'undefined' && module.exports) {
     matchesAnyKeyword, searchableText, mergeCves, countsBySeverity, sortCves, csvCell, toCsv,
     parseHashState, buildHashState, dailyCounts, isNewSince,
     EPSS_URGENT, EARLY_WARNING_HOURS, PRIORITY_TIERS, priorityTier, prioritySignals, rankByPriority, daysUntil,
-    CORE_SOFTWARE, coreSoftwareOf, isDistroOnly, isRemoteNoAuth, publicExploitSource, ssvcExploitation,
+    CORE_SOFTWARE, coreSoftwareOf, isDistroOnly, isRemoteNoAuth, publicExploitSource, ssvcExploitation, ssvcOf,
   };
 }

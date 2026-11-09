@@ -300,3 +300,24 @@ test('within P2, a Nuclei template outranks an NVD exploit reference', () => {
   ], () => undefined, { exploitIds: new Set(['CVE-NUC']) });
   assert.deepEqual(rows.map(r => r.v.cve.id), ['CVE-NUC', 'CVE-REF']);
 });
+
+test('ssvcOf reads NVD ssvcV203 when the CVE.org _ssvc is absent (CVE-2026-123158)', () => {
+  const v = { _source: 'nvd', cve: {
+    id: 'CVE-2026-123158', published: '2026-11-05T16:17:47.110',
+    descriptions: [{ lang: 'en', value: 'sshd in OpenSSH before 10.6p2 on Linux, when musl libc is used without PAM, lacks a workaround for a password authentication bypass.' }],
+    metrics: {
+      cvssMetricV31: [{ source: 'cve@mitre.org', type: 'Secondary', cvssData: { baseScore: 8.1, baseSeverity: 'HIGH', vectorString: 'CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H', attackVector: 'NETWORK', privilegesRequired: 'NONE' } }],
+      ssvcV203: [{ source: 'cisa', ssvcData: { id: 'CVE-2026-123158', role: 'CISA Coordinator', version: '2.0.3',
+        options: [{ exploitation: 'poc' }, { automatable: 'no' }, { technicalImpact: 'total' }] } }],
+    },
+  } };
+  assert.deepEqual(core.ssvcOf(v), { e: 'poc', a: 'no', t: 'total' });
+  assert.equal(core.publicExploitSource(v, new Set()), 'ssvc');
+  const s = core.prioritySignals(v, { core: x => core.coreSoftwareOf(x), exploitIds: new Set(), now: Date.parse('2026-11-09T15:00:00Z') });
+  assert.equal(s.tier, 2);
+  assert.equal(s.core, 'OpenSSH');
+  assert.ok(s.reasons.includes('CISA: proof of concept public'));
+  // the CVE.org form wins when both exist
+  assert.equal(core.ssvcOf({ ...v, _ssvc: { e: 'active', a: 'yes', t: 'total' } }).e, 'active');
+  assert.equal(core.ssvcOf({ cve: { id: 'CVE-1', metrics: {} } }), null);
+});

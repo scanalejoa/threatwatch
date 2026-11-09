@@ -1185,7 +1185,7 @@ function badgesHtml(v) {
   const core = coreOf(v);
   const exploit = publicExploitSource(v, exploitIds);
   return (v._kevExploited ? '<span class="kev-tag" title="Listed in CISA Known Exploited Vulnerabilities">⚡EXPLOITED</span>' : '')
-    + (!v._kevExploited && v._ssvc?.e === 'active' ? '<span class="kev-tag" title="CISA SSVC: exploitation active">⚡CISA: ACTIVE</span>' : '')
+    + (!v._kevExploited && ssvcOf(v)?.e === 'active' ? '<span class="kev-tag" title="CISA SSVC: exploitation active">⚡CISA: ACTIVE</span>' : '')
     + (exploit ? `<span class="exploit-tag" title="${escapeHtml(EXPLOIT_LABEL[exploit])}">PUBLIC EXPLOIT</span>` : '')
     + (core ? `<span class="core-tag" title="Core software watch">CORE · ${escapeHtml(core)}</span>` : '')
     + (isNewSince(v, PREV_VISIT_MS) ? '<span class="new-tag" title="Published or added to KEV since your last visit">NEW</span>' : '')
@@ -1727,7 +1727,7 @@ function prioEpssCell(r) {
 }
 
 function prioKevCell(v) {
-  if (!v._kevExploited && v._ssvc?.e === 'active') return '<span class="kev-tag" title="CISA SSVC: exploitation active (not yet in KEV)">⚡CISA: ACTIVE</span>';
+  if (!v._kevExploited && ssvcOf(v)?.e === 'active') return '<span class="kev-tag" title="CISA SSVC: exploitation active (not yet in KEV)">⚡CISA: ACTIVE</span>';
   if (!v._kevExploited) return '<span class="prio-dim">—</span>';
   const k = v._kev || {};
   const due = daysUntil(k.dueDate);
@@ -1902,7 +1902,7 @@ function exportPriorityCSV() {
     const e = epssCache.get(r.v.cve.id);
     const k = r.v._kev || {};
     return [rankOf.get(r), `${t.key} ${t.label}`, t.sla, r.reasons.join(' · '), r.v.cve.id, prioVendorText(r.v), r.core || '', r.early ? 'Yes' : '', r.exploit ? EXPLOIT_LABEL[r.exploit] : '',
-      r.v._kevExploited ? 'Yes' : 'No', k.dueDate || '', k.knownRansomwareCampaignUse || '', r.v._ssvc?.e || '',
+      r.v._kevExploited ? 'Yes' : 'No', k.dueDate || '', k.knownRansomwareCampaignUse || '', ssvcOf(r.v)?.e || '',
       e ? e.epss.toFixed(4) : '', e ? e.percentile.toFixed(3) : '', r.cvss || '', getSeverity(r.cvss), (r.v.cve.published || '').slice(0, 10), getDescription(r.v)];
   });
   downloadCsv([header, ...data], `threatwatch-fix-first-${_todayStr()}.csv`);
@@ -2043,7 +2043,7 @@ function renderCveDetail(id) {
       ${fact('Affected', escapeHtml(products.slice(0, 12).join(', ') + (products.length > 12 ? ` +${products.length - 12} more` : '')))}
       ${fact('Core software', escapeHtml(coreOf(v) || ''))}
       ${fact('Public exploit', escapeHtml(EXPLOIT_LABEL[publicExploitSource(v, exploitIds)] || ''))}
-      ${fact('CISA SSVC', v._ssvc ? escapeHtml(`exploitation: ${v._ssvc.e || '?'} · automatable: ${v._ssvc.a || '?'} · impact: ${v._ssvc.t || '?'}`) : '')}
+      ${fact('CISA SSVC', ssvcOf(v) ? escapeHtml(`exploitation: ${ssvcOf(v).e || '?'} · automatable: ${ssvcOf(v).a || '?'} · impact: ${ssvcOf(v).t || '?'}`) : '')}
       ${fact('Vendor advisory', v._upstream ? `<a href="${escapeHtml(safeUrl(v._upstream.link))}" target="_blank" rel="noopener">${escapeHtml(v._upstream.product)}${v._upstream.severity ? ' — ' + escapeHtml(v._upstream.severity) : ''} ↗</a>` : '')}
       ${fact('Assigned by (CNA)', escapeHtml(v.cve._cna || ''))}
     </div>
