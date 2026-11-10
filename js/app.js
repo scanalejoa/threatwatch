@@ -2431,7 +2431,18 @@ function persistProfile() {
   lsSet('tw_company_profile', JSON.stringify({ companyName, companyTechStack, companyModeActive, watchlist, notifyEnabled }));
 }
 
+/** Add text still typed in a tag box (user clicked Save without pressing Enter / + ADD). */
+function commitPendingTags(inputId, list) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean).forEach(t => { if (!list.includes(t)) list.push(t); });
+  input.value = '';
+}
+
 async function saveCompanyProfile() {
+  commitPendingTags('company-tag-input', _modalTechStack);
+  commitPendingTags('watch-tag-input', _modalWatchlist);
+  commitPendingTags('core-tag-input', _modalCoreExtra);
   companyName = (document.getElementById('company-name-input').value || '').trim();
   companyTechStack = [..._modalTechStack];
   watchlist = [..._modalWatchlist];
@@ -2454,13 +2465,18 @@ async function saveCompanyProfile() {
   currentPage = 1;
   renderAll();
   addLog('SYNC', `Profile saved: "${companyName || 'unnamed'}" — ${companyTechStack.length} tech(s), ${watchlist.length} watched, company mode ${companyModeActive ? 'ON' : 'OFF'}`);
+  if (companyModeActive && companyTechStack.length) addLog('SYNC', `Company mode: showing ${getActiveCves().length.toLocaleString()} of ${allCves.length.toLocaleString()} CVEs that match your stack`);
+  else if (companyModeActive) addLog('ALERT', 'Company mode is on but the tech stack is empty — nothing is filtered');
+  else if (companyTechStack.length) addLog('SYNC', 'Tech stack saved; turn on company mode to filter the dashboard to it');
 }
 
 function openCompanyModal() {
   _modalTechStack = [...companyTechStack];
   _modalWatchlist = [...watchlist];
   document.getElementById('company-name-input').value = companyName;
-  document.getElementById('company-mode-toggle').checked = companyModeActive;
+  // A brand-new profile starts with company mode on: filtering is why people create one.
+  const isNewProfile = !companyName && !companyTechStack.length && !lsGet('tw_company_profile');
+  document.getElementById('company-mode-toggle').checked = companyModeActive || isNewProfile;
   const nt = document.getElementById('notify-toggle');
   nt.checked = notifyEnabled;
   nt.disabled = !('Notification' in window);
